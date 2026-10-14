@@ -1,12 +1,14 @@
 """Chat with the BKP support agent in the terminal."""
 import anthropic
 
-from bkp_agent.agent import NO_CREDENTIALS_MSG, SupportAgent, is_missing_credentials
-from bkp_agent.config import open_store
+from bkp_agent.agent import NO_CREDENTIALS_MSG, is_missing_credentials
+from bkp_agent.config import ai_enabled, make_agent, open_store
 
 
 def main() -> None:
-    agent = SupportAgent(open_store())
+    agent = make_agent(open_store())
+    mode = "AI mode (Claude)" if ai_enabled() else "simple mode, no API key needed"
+    print(f"[{mode}]")
     print("Bee (BKP support): Hi! I can track orders, show order details, help with "
           "refunds, or answer questions. Type 'quit' to exit, 'reset' to start over.\n")
     while True:

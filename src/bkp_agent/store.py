@@ -141,28 +141,29 @@ class OrderStore:
         if any(r["status"] == "CONFIRMED" for r in self._refunds_for(o["order_id"])):
             result["explanation"] = "A refund has already been confirmed for this order."
         elif o["status"] == "CANCELLED":
-            result["explanation"] = "Order was cancelled and refunded automatically."
+            result["explanation"] = "This order was cancelled and refunded automatically."
         elif o["status"] in ("SHIPPED", "IN_TRANSIT"):
             result["explanation"] = (
-                "Order is on its way; it can't be refunded until delivered. The "
-                "customer can refuse delivery or request a return after it arrives."
+                "The order is on its way, so it can't be refunded until it's delivered. "
+                "You can refuse the delivery, or request a return after it arrives."
             )
         elif o["status"] == "PROCESSING":
             result.update(eligible=True, refund_amount=subtotal + o["shipping_fee"],
-                          explanation="Not yet shipped: full cancellation refund including shipping.")
+                          explanation="It hasn't shipped yet, so you get a full refund including shipping.")
         elif o["status"] == "DELIVERED":
             delivered = datetime.fromisoformat(o["delivered_at"]).date()
             days = (self.today - delivered).days
             if days <= REFUND_WINDOW_DAYS:
                 result.update(
                     eligible=True, refund_amount=subtotal,
-                    explanation=(f"Delivered {days} day(s) ago, within the {REFUND_WINDOW_DAYS}-day "
-                                 "window. Item price refunded; shipping fee is non-refundable. "
-                                 "A return pickup will be scheduled."),
+                    explanation=(f"It was delivered {days} day(s) ago, within the "
+                                 f"{REFUND_WINDOW_DAYS}-day return window. You get the item price "
+                                 "back (the shipping fee isn't refundable), and we'll schedule a "
+                                 "pickup for the item."),
                 )
             else:
                 result["explanation"] = (
-                    f"Delivered {days} days ago, outside the {REFUND_WINDOW_DAYS}-day return window."
+                    f"It was delivered {days} days ago, outside the {REFUND_WINDOW_DAYS}-day return window."
                 )
         else:
             result["explanation"] = f"Orders with status {o['status']} can't be refunded."
@@ -191,6 +192,14 @@ class OrderStore:
             )
         return {"refund_id": refund_id, "order_id": oid, "amount": elig["refund_amount"],
                 "status": "PENDING", "explanation": elig["explanation"]}
+
+    def cancel_refund_request(self, refund_id: str) -> None:
+        """Drop a PENDING refund the customer decided not to go ahead with."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE refunds SET status='WITHDRAWN' WHERE refund_id=? AND status='PENDING'",
+                (refund_id.strip().upper(),),
+            )
 
     def confirm_refund(self, refund_id: str) -> dict:
         refund_id = refund_id.strip().upper()

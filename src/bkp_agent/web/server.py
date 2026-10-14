@@ -4,14 +4,15 @@ from __future__ import annotations
 import uuid
 from collections import OrderedDict
 from pathlib import Path
+from typing import Any
 
 import anthropic
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from bkp_agent.agent import NO_CREDENTIALS_MSG, SupportAgent, is_missing_credentials
-from bkp_agent.config import open_store
+from bkp_agent.agent import NO_CREDENTIALS_MSG, is_missing_credentials
+from bkp_agent.config import make_agent, open_store
 
 MAX_SESSIONS = 500
 
@@ -19,7 +20,7 @@ app = FastAPI(title="BKP Support Agent")
 _store = open_store()
 # In-memory chat sessions, oldest evicted first. Use a real session store
 # (Redis, a DB) if you run more than one server process.
-_sessions: OrderedDict[str, SupportAgent] = OrderedDict()
+_sessions: OrderedDict[str, Any] = OrderedDict()
 
 
 class ChatRequest(BaseModel):
@@ -32,12 +33,12 @@ class ChatResponse(BaseModel):
     session_id: str
 
 
-def _agent_for(session_id: str | None) -> tuple[str, SupportAgent]:
+def _agent_for(session_id: str | None) -> tuple[str, Any]:
     if session_id and session_id in _sessions:
         _sessions.move_to_end(session_id)
         return session_id, _sessions[session_id]
     session_id = uuid.uuid4().hex
-    _sessions[session_id] = SupportAgent(_store)
+    _sessions[session_id] = make_agent(_store)
     while len(_sessions) > MAX_SESSIONS:
         _sessions.popitem(last=False)
     return session_id, _sessions[session_id]

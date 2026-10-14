@@ -10,21 +10,40 @@ An AI customer-support agent for **BKP**, built with Claude. Customers chat with
 
 You can chat with it in a **web page** or in the **terminal**.
 
+## Two modes
+
+| | Simple mode (default) | AI mode |
+|---|---|---|
+| Needs an API key | **No** | Yes, an Anthropic API key |
+| Cost | Free | Pay per use (Claude API) |
+| Understands | Short, direct messages: "track my order", "refund BKP-10001", "is shipping free?" | Natural conversation, typos, follow-ups, mixed questions |
+| Order tracking, details, refunds, FAQ | Yes | Yes |
+
+The app picks **simple mode** unless `ANTHROPIC_API_KEY` is set. To force a
+mode, set `BKP_AGENT_MODE=simple` or `BKP_AGENT_MODE=claude`.
+
+Both modes use the same order data and the same refund rules.
+
 ## Quick start
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-export ANTHROPIC_API_KEY=sk-ant-...      # from https://console.anthropic.com
 
-# Web chat at http://localhost:8000
+# Web chat at http://localhost:8000 (simple mode, no key needed)
 uvicorn bkp_agent.web.server:app --port 8000
 
 # ...or chat in the terminal
 bkp-agent
 ```
 
-Run the tests (no API key needed; they use a scripted fake Claude client):
+For AI mode, set your key first (from https://console.anthropic.com):
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Run the tests (no API key needed; AI-mode tests use a scripted fake Claude client):
 
 ```bash
 pytest
@@ -51,6 +70,12 @@ A refund conversation goes like this:
 
 ## How it works
 
+**Simple mode** (`src/bkp_agent/simple.py`) spots the order ID and email in a
+message, works out what the customer wants from keywords (track / details /
+refund), asks for anything missing, and matches questions against the FAQ.
+
+**AI mode:**
+
 ```
 customer ──► SupportAgent.chat() ──► Claude (claude-opus-5-5)
                   ▲                        │ tool calls
@@ -69,7 +94,7 @@ Tools Claude can call: `get_order_status`, `get_order_details`,
 ### Safety built in
 
 - **Identity check:** every lookup needs the order ID *and* the email it was placed with. A wrong email and an unknown order get the same error, so nobody can probe for valid order IDs.
-- **Refunds need a real "yes":** `request_refund` only creates a pending refund. `confirm_refund` is refused in code unless the customer has sent another message since the refund was quoted. Even if the model tried to skip asking, no refund goes through until the customer replies.
+- **Refunds need a real "yes":** in both modes, a refund is only quoted first and processed after the customer replies "yes". In AI mode, `request_refund` only creates a pending refund. `confirm_refund` is refused in code unless the customer has sent another message since the refund was quoted. Even if the model tried to skip asking, no refund goes through until the customer replies.
 - **Rules live in code, not the prompt:** the 30-day window, no refunds while in transit, non-refundable shipping fees, and duplicate-refund protection are enforced in `store.py`.
 - **Refusal fallback:** requests use the API's server-side fallback (`fallbacks: "default"`). If Claude declines a request, a fallback model answers instead of the chat dead-ending.
 
@@ -88,7 +113,8 @@ keeping the same return shapes. Also:
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | (required) | Your Anthropic API key |
+| `ANTHROPIC_API_KEY` | (unset) | Your Anthropic API key; turns on AI mode |
+| `BKP_AGENT_MODE` | `auto` | `simple`, `claude`, or `auto` (AI mode if a key is set) |
 | `BKP_DB_PATH` | `data/bkp.db` | SQLite database location |
 
 The model and effort level are set at the top of `src/bkp_agent/agent.py`.
