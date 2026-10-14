@@ -1,0 +1,113 @@
+[
+  {
+    "order_id": "BKP-10001",
+    "customer_name": "Priya Sharma",
+    "email": "priya@example.com",
+    "placed_at": "2026-10-01T10:15:00+05:30",
+    "status": "DELIVERED",
+    "items": [
+      {"sku": "HP-220", "name": "Wireless Headphones", "qty": 1, "unit_price": 2499.0},
+      {"sku": "CB-010", "name": "USB-C Cable (1m)", "qty": 2, "unit_price": 299.0}
+    ],
+    "shipping_fee": 0.0,
+    "payment_method": "UPI",
+    "shipping_address": "12 MG Road, Bengaluru, KA 560001",
+    "carrier": "BlueDart",
+    "tracking_number": "BD123456789IN",
+    "estimated_delivery": "2026-10-05",
+    "delivered_at": "2026-10-04T16:40:00+05:30",
+    "events": [
+      {"at": "2026-10-01T10:15:00+05:30", "status": "PLACED", "note": "Order placed"},
+      {"at": "2026-10-01T18:00:00+05:30", "status": "SHIPPED", "note": "Dispatched from Mumbai warehouse"},
+      {"at": "2026-10-03T09:30:00+05:30", "status": "IN_TRANSIT", "note": "Arrived at Bengaluru hub"},
+      {"at": "2026-10-04T16:40:00+05:30", "status": "DELIVERED", "note": "Delivered, received by customer"}
+    ]
+  },
+  {
+    "order_id": "BKP-10002",
+    "customer_name": "Rahul Verma",
+    "email": "rahul@example.com",
+    "placed_at": "2026-10-10T14:05:00+05:30",
+    "status": "IN_TRANSIT",
+    "items": [
+      {"sku": "SW-500", "name": "Smart Watch", "qty": 1, "unit_price": 5999.0}
+    ],
+    "shipping_fee": 49.0,
+    "payment_method": "Credit Card",
+    "shipping_address": "45 Park Street, Kolkata, WB 700016",
+    "carrier": "Delhivery",
+    "tracking_number": "DLV998877665",
+    "estimated_delivery": "2026-10-16",
+    "delivered_at": null,
+    "events": [
+      {"at": "2026-10-10T14:05:00+05:30", "status": "PLACED", "note": "Order placed"},
+      {"at": "2026-10-11T11:00:00+05:30", "status": "SHIPPED", "note": "Dispatched from Delhi warehouse"},
+      {"at": "2026-10-13T08:20:00+05:30", "status": "IN_TRANSIT", "note": "In transit to Kolkata hub"}
+    ]
+  },
+  {
+    "order_id": "BKP-10003",
+    "customer_name": "Ananya Iyer",
+    "email": "ananya@example.com",
+    "placed_at": "2026-10-13T20:45:00+05:30",
+    "status": "PROCESSING",
+    "items": [
+      {"sku": "BK-777", "name": "Laptop Backpack", "qty": 1, "unit_price": 1799.0},
+      {"sku": "MS-120", "name": "Wireless Mouse", "qty": 1, "unit_price": 899.0}
+    ],
+    "shipping_fee": 0.0,
+    "payment_method": "Debit Card",
+    "shipping_address": "7 Anna Salai, Chennai, TN 600002",
+    "carrier": null,
+    "tracking_number": null,
+    "estimated_delivery": "2026-10-19",
+    "delivered_at": null,
+    "events": [
+      {"at": "2026-10-13T20:45:00+05:30", "status": "PLACED", "note": "Order placed"},
+      {"at": "2026-10-14T09:00:00+05:30", "status": "PROCESSING", "note": "Being packed at Chennai warehouse"}
+    ]
+  },
+  {
+    "order_id": "BKP-10004",
+    "customer_name": "Priya Sharma",
+    "email": "priya@example.com",
+    "placed_at": "2026-08-20T12:00:00+05:30",
+    "status": "DELIVERED",
+    "items": [
+      {"sku": "KB-300", "name": "Mechanical Keyboard", "qty": 1, "unit_price": 3499.0}
+    ],
+    "shipping_fee": 0.0,
+    "payment_method": "UPI",
+    "shipping_address": "12 MG Road, Bengaluru, KA 560001",
+    "carrier": "BlueDart",
+    "tracking_number": "BD555666777IN",
+    "estimated_delivery": "2026-08-24",
+    "delivered_at": "2026-08-23T13:10:00+05:30",
+    "events": [
+      {"at": "2026-08-20T12:00:00+05:30", "status": "PLACED", "note": "Order placed"},
+      {"at": "2026-08-21T10:00:00+05:30", "status": "SHIPPED", "note": "Dispatched"},
+      {"at": "2026-08-23T13:10:00+05:30", "status": "DELIVERED", "note": "Delivered"}
+    ]
+  },
+  {
+    "order_id": "BKP-10005",
+    "customer_name": "Vikram Singh",
+    "email": "vikram@example.com",
+    "placed_at": "2026-10-08T09:30:00+05:30",
+    "status": "CANCELLED",
+    "items": [
+      {"sku": "SP-050", "name": "Bluetooth Speaker", "qty": 1, "unit_price": 1999.0}
+    ],
+    "shipping_fee": 0.0,
+    "payment_method": "Credit Card",
+    "shipping_address": "88 Civil Lines, Jaipur, RJ 302006",
+    "carrier": null,
+    "tracking_number": null,
+    "estimated_delivery": null,
+    "delivered_at": null,
+    "events": [
+      {"at": "2026-10-08T09:30:00+05:30", "status": "PLACED", "note": "Order placed"},
+      {"at": "2026-10-08T15:00:00+05:30", "status": "CANCELLED", "note": "Cancelled by customer; refund issued"}
+    ]
+  }
+]

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BKP Support</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1d2330; --muted:#6b7280; --accent:#1f6feb; --me:#1f6feb; --me-text:#fff; --bot:#eef1f5; --border:#e3e6eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1218; --card:#171b23; --text:#e6e8ec; --muted:#9aa3b2; --accent:#4c8dff; --me:#2f6fe0; --me-text:#fff; --bot:#222834; --border:#2a303c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width:720px; margin:0 auto; height:100dvh; display:flex; flex-direction:column; padding:16px; }
+  header { display:flex; align-items:center; justify-content:space-between; padding-bottom:12px; }
+  header h1 { font-size:18px; margin:0; }
+  header small { color:var(--muted); display:block; font-weight:400; }
+  button { font:inherit; cursor:pointer; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); padding:8px 14px; }
+  #log { flex:1; overflow-y:auto; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; display:flex; flex-direction:column; gap:10px; }
+  .msg { max-width:85%; padding:10px 14px; border-radius:14px; white-space:pre-wrap; word-wrap:break-word; }
+  .me { align-self:flex-end; background:var(--me); color:var(--me-text); border-bottom-right-radius:4px; }
+  .bot { align-self:flex-start; background:var(--bot); border-bottom-left-radius:4px; }
+  .typing { color:var(--muted); font-style:italic; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; padding:10px 0; }
+  .chips button { padding:5px 10px; font-size:13px; border-radius:999px; }
+  form { display:flex; gap:8px; }
+  input { flex:1; font:inherit; padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); min-width:0; }
+  form button { background:var(--accent); color:#fff; border:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>BKP Support<small>Chat with Bee about your orders</small></h1>
+    <button id="reset" type="button">New chat</button>
+  </header>
+  <div id="log" aria-live="polite"></div>
+  <div class="chips">
+    <button type="button">Where is my order?</button>
+    <button type="button">I want a refund</button>
+    <button type="button">What is your return policy?</button>
+  </div>
+  <form id="f">
+    <input id="m" autocomplete="off" placeholder="Type a message…" aria-label="Message">
+    <button type="submit">Send</button>
+  </form>
+</div>
+<script>
+const log = document.getElementById('log'), input = document.getElementById('m');
+let sessionId = null, busy = false;
+
+function add(text, who, extra) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + who + (extra ? ' ' + extra : '');
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+function greet() { add("Hi, I'm Bee from BKP! I can track your order, show order details, help with refunds, or answer questions. What can I do for you?", 'bot'); }
+
+async function send(text) {
+  if (busy || !text.trim()) return;
+  busy = true;
+  add(text, 'me');
+  const typing = add('Bee is typing…', 'bot', 'typing');
+  try {
+    const r = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ message: text, session_id: sessionId }) });
+    const data = await r.json();
+    typing.remove();
+    if (!r.ok) { add('Sorry, something went wrong: ' + (data.detail || r.status), 'bot'); return; }
+    sessionId = data.session_id;
+    add(data.reply, 'bot');
+  } catch (e) {
+    typing.remove();
+    add('Network error. Please try again.', 'bot');
+  } finally { busy = false; input.focus(); }
+}
+
+document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); const t = input.value; input.value = ''; send(t); });
+document.querySelectorAll('.chips button').forEach(b => b.addEventListener('click', () => send(b.textContent)));
+document.getElementById('reset').addEventListener('click', async () => {
+  if (sessionId) fetch('/api/reset', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ session_id: sessionId }) });
+  sessionId = null; log.innerHTML = ''; greet();
+});
+greet();
+</script>
+</body>
+</html>
