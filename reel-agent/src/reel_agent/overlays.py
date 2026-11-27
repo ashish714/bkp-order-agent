@@ -69,39 +69,94 @@ def _shadow_text(canvas: Image.Image, xy, lines, fnt, fill, spacing: int, align=
         y += fnt.size + spacing
 
 
-def title_card(size, text: str, out: Path, font_path=None) -> Path:
+POS_Y = {"top": 0.24, "center": 0.45, "bottom": 0.74}
+
+
+def text_png(size, text: str, out: Path, role: str = "caption", style: str = "shadow",
+             position: str = "bottom", accent: str = "#111111", font_path=None,
+             visible_words: int | None = None, visible_chars: int | None = None) -> Path:
+    """Draw a title or caption. visible_words draws only the first N words (word-by-word
+    animation) while keeping the layout of the full line, so words don't jump around."""
     W, H = size
     im = Image.new("RGBA", size, (0, 0, 0, 0))
-    # soft dark gradient behind the text so it reads on any footage
-    grad = Image.new("L", (1, H))
-    for y in range(H):
-        rel = abs(y - H * 0.42) / (H * 0.25)
-        grad.putpixel((0, y), int(max(0, 1 - rel) * 120))
-    im.paste((0, 0, 0, 255), (0, 0), grad.resize(size))
-    fnt = font(int(W * 0.105), custom=font_path)
     d = ImageDraw.Draw(im)
-    lines = _wrap(d, text.upper(), fnt, int(W * 0.84))
-    block = len(lines) * (fnt.size + 12)
-    _shadow_text(im, (0, int(H * 0.42 - block / 2)), lines, fnt, (255, 255, 255, 255), 12)
+    is_title = role == "title"
+    fnt = font(int(min(W, H * 0.62) * (0.105 if is_title else 0.064)), custom=font_path)
+    text = text.upper() if is_title else text
+    lines = _wrap(d, text, fnt, int(W * (0.84 if is_title else 0.82)))
+    gap = 12 if is_title else 10
+    block = len(lines) * (fnt.size + gap)
+    y0 = int(H * POS_Y.get(position, 0.45) - block / 2)
+
+    if is_title and style == "shadow":
+        # soft dark band behind the text so it reads on any footage
+        band = Image.new("L", (1, H))
+        cy, spread = y0 + block / 2, max(block * 1.6, H * 0.18)
+        for y in range(H):
+            band.putpixel((0, y), int(max(0.0, 1 - abs(y - cy) / spread) * 120))
+        im.paste((0, 0, 0, 255), (0, 0), band.resize(size))
+
+    # which words show
+    shown = lines
+    if visible_chars is not None:
+        left, shown = visible_chars, []
+        for ln in lines:
+            shown.append(ln[:max(left, 0)])
+            left -= len(ln) + 1
+    elif visible_words is not None:
+        left, shown = visible_words, []
+        for ln in lines:
+            words = ln.split()
+            shown.append(" ".join(words[:max(left, 0)]))
+            left -= len(words)
+
+    widest = max(d.textlength(ln, font=fnt) for ln in lines)
+    pad = int(W * 0.03)
+    if style == "box":
+        box = [(W - widest) / 2 - pad * 1.4, y0 - pad, (W + widest) / 2 + pad * 1.4, y0 + block + pad * 0.5]
+        d.rounded_rectangle(box, radius=pad, fill=_rgb(accent) + (235,))
+    elif style == "shadow" and not is_title:
+        box = [(W - widest) / 2 - pad, y0 - pad, (W + widest) / 2 + pad, y0 + block + pad * 0.6]
+        d.rounded_rectangle(box, radius=pad, fill=(0, 0, 0, 140))
+
+    if style == "neon":
+        glow = Image.new("RGBA", size, (0, 0, 0, 0))
+        gd = ImageDraw.Draw(glow)
+        y = y0
+        for full, part in zip(lines, shown):
+            x = (W - d.textlength(full, font=fnt)) / 2
+            gd.text((x, y), part, font=fnt, fill=_rgb(accent) + (255,), stroke_width=6, stroke_fill=_rgb(accent) + (255,))
+            y += fnt.size + gap
+        im.alpha_composite(glow.filter(ImageFilter.GaussianBlur(14)))
+        im.alpha_composite(glow.filter(ImageFilter.GaussianBlur(4)))
+
+    if style == "shadow":
+        shadow = Image.new("RGBA", size, (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shadow)
+        y = y0
+        for full, part in zip(lines, shown):
+            x = (W - d.textlength(full, font=fnt)) / 2
+            sd.text((x + 3, y + 4), part, font=fnt, fill=(0, 0, 0, 170))
+            y += fnt.size + gap
+        im.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(6)))
+
+    y = y0
+    stroke = {"outline": (max(3, fnt.size // 14), (0, 0, 0, 255))}.get(style, (0, None))
+    for full, part in zip(lines, shown):
+        x = (W - d.textlength(full, font=fnt)) / 2
+        d.text((x, y), part, font=fnt, fill=(255, 255, 255, 255),
+               stroke_width=stroke[0], stroke_fill=stroke[1])
+        y += fnt.size + gap
     im.save(out)
     return out
+
+
+def title_card(size, text: str, out: Path, font_path=None) -> Path:
+    return text_png(size, text, out, role="title", position="center", font_path=font_path)
 
 
 def caption(size, text: str, out: Path, font_path=None) -> Path:
-    W, H = size
-    im = Image.new("RGBA", size, (0, 0, 0, 0))
-    fnt = font(int(W * 0.062), custom=font_path)
-    d = ImageDraw.Draw(im)
-    lines = _wrap(d, text, fnt, int(W * 0.8))
-    block = len(lines) * (fnt.size + 10)
-    y0 = int(H * 0.72 - block / 2)
-    pad = int(W * 0.03)
-    widest = max(d.textlength(ln, font=fnt) for ln in lines)
-    box = [(W - widest) / 2 - pad, y0 - pad, (W + widest) / 2 + pad, y0 + block + pad * 0.6]
-    d.rounded_rectangle(box, radius=pad, fill=(0, 0, 0, 140))
-    _shadow_text(im, (0, y0), lines, fnt, (255, 255, 255, 255), 10)
-    im.save(out)
-    return out
+    return text_png(size, text, out, role="caption", position="bottom", font_path=font_path)
 
 
 def price_tag(size, product: str, price: str, bg: str, fg: str, out: Path, font_path=None) -> Path:

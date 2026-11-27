@@ -21,7 +21,7 @@ from pathlib import Path
 from .media import find_media, pick_shots
 from .plan import EditPlan
 from .planner import MODEL, PLAN_SCHEMA, simple_fields
-from .render import render, timeline
+from .render import Timeline, build_timeline, render
 
 AUDIO_EXT = {".mp3", ".m4a", ".wav", ".aac", ".ogg"}
 
@@ -45,22 +45,39 @@ EDIT_TOOL = {
     },
 }
 
-SYSTEM = """You are Reel Agent, a friendly video editor for small shop owners. They upload \
-product photos and clips and tell you what they want; you make short videos for Instagram \
-Reels, TikTok and Shorts by calling edit_video.
+SYSTEM = """You are Reel Agent, a friendly video editor for small shop owners, like CapCut \
+but driven by chat. They upload product photos and clips and say what they want; you edit \
+by calling edit_video, which re-renders the video.
+
+What you can do (all through edit_video):
+- Formats 9:16 / 1:1 / 4:5 / 16:9; length; pace; speed (whole video or per clip); reverse or \
+mirror clips; drop, restore or reorder files.
+- 45+ transitions: fade, dissolve, flash, fade_black, slide/push/wipe/cover/reveal in any \
+direction, zoom, circle, radial, pixelize, blur, squeeze, slice, wind, doors, and drawn ones: \
+spin, spin_left, flip, flip_up, cube_left/right, zoom_in, zoom_out, whip_left/right/up, glitch, \
+shake. 'mixed' varies them. Set one for every cut with `transition`, or single cuts with \
+`cut_transitions` (use the cut numbers and times in the state).
+- Beat sync: cuts land on the music's beats (needs a music file; the state says if there is one).
+- Filters (look), adjustments (brightness, contrast, saturation, warmth), effects (vignette, \
+grain, letterbox, shake, retro, glow, sharpen, pulse_on_beat, flash_on_beat).
+- Blur-fill canvas (fit=blur) so nothing gets cropped.
+- Text: title, captions, timed texts, styles (shadow, outline, box, neon), animations (fade, \
+slide, words, typewriter), position. Price tag and branded end card with call to action.
+- Audio: music track (they upload it), keep clips' own sound, music volume.
 
 How to work:
 - If the files are uploaded and the request is clear enough, call edit_video right away. \
 Don't ask for details you can sensibly default (15 s, 9:16 reel, a look that fits the mood).
-- For follow-ups ("shorter", "price is $19", "remove the blurry one", "more energy"), call \
-edit_video with just the fields that change.
+- For follow-ups, call edit_video with only the fields that change. For list fields (effects, \
+captions, texts, cut_transitions, clip lists) send the complete new list.
+- "At 15 seconds" means the cut nearest 15 s: use cut_transitions with its cut number.
 - Never invent prices, discounts, handles or product claims. Leave them empty if not given.
 - Titles and captions: short and punchy. No hashtags or emojis unless the user uses them.
 - If no files are uploaded yet, ask them to add photos or clips first.
-- Keep replies to one or two short sentences. Say what you changed. Don't describe the \
-whole plan back; they can watch the video.
-- You can't add beat-synced cuts, auto-captions from speech, new AI footage or object \
-removal. Say so briefly if asked."""
+- Replies: one or two short sentences of plain text, no markdown. Say what you changed.
+- Not possible here: AI-generated footage, removing objects or backgrounds, voiceover, \
+auto-captions from speech, stickers/emoji, keyframing a single moment. Say so briefly and \
+offer the closest thing you can do."""
 
 
 @dataclass
@@ -70,6 +87,7 @@ class Turn:
     plan: dict | None = None
     shots: list[dict] = field(default_factory=list)
     length: float = 0.0
+    cuts: list[dict] = field(default_factory=list)
     error: str | None = None
 
 
@@ -94,6 +112,7 @@ class ReelChat:
         self.music: Path | None = None
         self.logo: Path | None = None
         self.renders = 0
+        self.timeline: Timeline | None = None
 
     # ---------------------------------------------------------------- files
     def add_file(self, name: str, data: bytes) -> str:
@@ -140,9 +159,17 @@ class ReelChat:
             lines.append("Excluded: " + ", ".join(sorted(self.exclude)))
         if self.order:
             lines.append("Custom order: " + ", ".join(self.order))
-        lines.append("Music: " + (self.music.name if self.music else "none"))
+        lines.append("Music: " + (self.music.name if self.music else "none uploaded (beat sync and *_on_beat effects need one)"))
         lines.append("Logo: " + (self.logo.name if self.logo else "none"))
         lines.append("Current plan: " + (json.dumps(self.plan.to_dict()) if self.plan else "no video yet"))
+        if self.timeline:
+            tl = self.timeline
+            lines.append(f"Current video: {tl.total:.1f}s ({tl.montage:.1f}s montage + end card)"
+                         + (f", music at {tl.beats.bpm:.0f} BPM" if tl.beats else ""))
+            lines.append("Shots: " + "; ".join(f"{i + 1}. {s.asset.name} {tl.starts[i]:.1f}s-"
+                                               f"{tl.starts[i] + s.length:.1f}s" for i, s in enumerate(tl.shots)))
+            lines.append("Cuts: " + ("; ".join(f"#{c['cut']} at {c['at']:.1f}s {c['transition']} "
+                                               f"({c['from']} -> {c['to']})" for c in tl.cuts) or "none"))
         return "\n".join(lines)
 
     def _send_claude(self, message: str) -> Turn:
@@ -179,7 +206,7 @@ class ReelChat:
         if turn.error:
             turn.reply = (text + " " if text else "") + turn.error
         else:
-            turn.reply = text or "Here's your video."
+            turn.reply = (text or "Here's your video.") + turn.reply
         return turn
 
     def _send_simple(self, message: str) -> Turn:
@@ -193,16 +220,35 @@ class ReelChat:
             elif re.search(r"\blonger\b", m):
                 changes["duration"] = min(60.0, dur * 1.4)
         for name in self.files():
-            stem = Path(name).stem.lower()
-            if re.search(rf"\b(remove|drop|delete|without|skip)\b.*\b{re.escape(stem)}\b", m):
+            stem = re.escape(Path(name).stem.lower())
+            if re.search(rf"\b(remove|drop|delete|without|skip)\b.*\b{stem}\b", m):
                 changes.setdefault("exclude_files", []).append(name)
+            if re.search(rf"\b(reverse|backwards?|rewind)\b.*\b{stem}\b|\b{stem}\b.*\b(reversed?|backwards?)\b", m):
+                changes["reverse_files"] = sorted(set(base.get("reverse_files", [])) | {name})
+            if re.search(rf"\b(mirror|flip horizontally)\b.*\b{stem}\b", m):
+                changes["mirror_files"] = sorted(set(base.get("mirror_files", [])) | {name})
+            sp = re.search(rf"\b(slow(?:[- ]?mo| motion| down)?|speed up|faster|fast)\b.*\b{stem}\b", m)
+            if sp:
+                speeds = dict(base.get("clip_speeds", {}))
+                speeds[name] = 0.5 if sp.group(1).startswith("slow") else 2.0
+                changes["clip_speeds"] = speeds
+        # effects and per-cut transitions add to what's there
+        if changes.get("effects"):
+            changes["effects"] = list(dict.fromkeys(base.get("effects", []) + changes["effects"]))
+            for e in list(changes["effects"]):
+                if re.search(rf"\b(remove|no|without)\b[^,.]*{e.split('_')[0]}", m):
+                    changes["effects"].remove(e)
+        if changes.get("cut_transitions"):
+            keep = [c for c in base.get("cut_transitions", [])
+                    if not any(c.get("at") == n.get("at") for n in changes["cut_transitions"])]
+            changes["cut_transitions"] = keep + changes["cut_transitions"]
         if not changes and self.plan is not None:
             return Turn("I couldn't tell what to change. Try things like: \"shorter\", \"warm look\", "
                         "\"price $19\", \"square\", \"hard cuts\", or \"remove 02_pour\". "
                         "(Add an API key for full conversation.)", plan=base)
         turn = self._apply_and_render(changes)
         if not turn.error:
-            turn.reply = "Here's your video." if self.renders == 1 else "Updated."
+            turn.reply = ("Here's your video." if self.renders == 1 else "Updated.") + turn.reply
         else:
             turn.reply = turn.error
         return turn
@@ -230,14 +276,21 @@ class ReelChat:
         if self.order:
             rank = {n: i for i, n in enumerate(self.order)}
             assets.sort(key=lambda a: (rank.get(a.name, len(rank)), a.name.lower()))
+        music = str(self.music) if self.music else None
         try:
             shots = pick_shots(assets, self.plan)
+            tl = build_timeline(shots, self.plan, music)
             self.renders += 1
             name = f"reel_{self.renders:02d}_{int(time.time())}.mp4"
-            render(shots, self.plan, self.out_dir / name, music=str(self.music) if self.music else None,
+            render(tl, self.plan, self.out_dir / name, music=music,
                    logo=str(self.logo) if self.logo else None)
         except Exception as e:
             return Turn("", plan=self.plan.to_dict(), error=f"The render failed: {e}")
-        return Turn("", video=name, plan=self.plan.to_dict(),
-                    shots=[{"file": s.asset.name, "seconds": s.length} for s in shots],
-                    length=round(timeline(shots, self.plan)["total"], 1))
+        self.timeline = tl
+        note = ""
+        if self.plan.beat_sync and not tl.beats:
+            note = (" (Beat sync is on, but there's no music with a clear beat, so normal pacing was used.)"
+                    if music else " (Upload a music file to use beat sync.)")
+        return Turn(note, video=name, plan=self.plan.to_dict(),
+                    shots=[{"file": s.asset.name, "seconds": s.length} for s in tl.shots],
+                    length=round(tl.total, 1), cuts=tl.cuts)

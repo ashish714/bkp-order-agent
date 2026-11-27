@@ -7,7 +7,7 @@ product Reel for a small shop.
 reel-agent ./candle "15 sec warm reel for our new soy candle, \$24, shop now, @glowco, brown brand color"
 ```
 
-Sample output: [`examples/sample-reel.mp4`](examples/sample-reel.mp4) · Chat page: [`examples/chat-screens.png`](examples/chat-screens.png)
+Sample output: [`examples/sample-reel.mp4`](examples/sample-reel.mp4) · All features (spin, flip, whip, cube, glitch, zoom on the beat): [`examples/sample-features.mp4`](examples/sample-features.mp4) · Chat page: [`examples/chat-screens.png`](examples/chat-screens.png)
 
 What you get: a 9:16 MP4 with the best shots in order, slow zooms on photos, the
 sharpest part of each clip, a color look, transitions, an opening title, a price
@@ -15,18 +15,37 @@ tag, short captions, music and a branded end card ("Soy Candle · $24 · SHOP NO
 
 ## What it does
 
-1. **Edits from one sentence.** You describe the video, and it builds an edit plan.
-2. **Picks the shots.** It uses files in filename order (`01_…`, `02_…`) and drops clearly blurry ones.
-3. **Finds the best part of each clip.** It samples each video and keeps the sharpest, steadiest window.
-4. **Brings photos to life.** Slow zooms and pans (Ken Burns), varied from shot to shot.
-5. **Four sizes:** Reel/TikTok/Shorts 9:16, square 1:1, feed 4:5, YouTube 16:9.
-6. **Color looks:** natural, warm, cool, moody, vibrant, clean, black and white.
-7. **Transitions and pacing:** fade, slide, zoom, wipe or hard cuts; slow, medium or fast pacing; slow motion.
-8. **Text:** opening title, a price tag in your brand color, short captions.
-9. **End card:** product, price, CTA button, logo and @handle.
-10. **Music:** fitted to the video length with fade-in and fade-out. With no music it adds a silent track so Instagram accepts the file.
+The main CapCut editing tools, driven by a sentence instead of a timeline.
 
-It doesn't sync cuts to the beat, auto-caption speech, remove objects or generate new footage.
+**Editing**
+- **Edits from one sentence**, then takes changes in chat ("shorter", "spin at 15 sec", "add grain").
+- **Picks the shots:** files go in filename order, clearly blurry shots are dropped, and each clip's sharpest part is used.
+- **Photos come alive** with slow zooms and pans (Ken Burns).
+- **Speed:** slow motion or fast for the whole video or one clip. **Reverse** and **mirror** any clip.
+- **Canvas:** 9:16, 1:1, 4:5, 16:9. **Blur-fill** shows the whole shot over a blurred copy instead of cropping.
+
+**Transitions (45+)**
+- Basic: fade, dissolve, flash (white), fade to black, grayscale fade.
+- Movement: slide, push, wipe, cover and reveal, in any direction; doors, diagonal, squeeze, slice, wind.
+- Camera: zoom, circle open/close, radial, pixelize, blur.
+- CapCut-style (drawn frame by frame): **spin**, **3D flip**, **cube**, **zoom in/out blur**, **whip pan**, **glitch**, **shake**.
+- One style for every cut, `mixed` for variety, or a **different transition per cut** ("glitch at 8 s, spin at 15 s").
+- **Beat sync:** finds the beat in your music and lands every cut on it.
+
+**Look**
+- **15 filters:** natural, warm, cool, moody, vibrant, clean, black & white, vintage, film, cinematic, golden, pastel, noir, faded, vivid.
+- **Adjust:** brightness, contrast, saturation, warmth.
+- **Effects:** vignette, film grain, letterbox bars, camera shake, retro/VHS, glow, sharpen, **zoom pulse on the beat**, **flash on the beat**.
+
+**Text**
+- Opening title, captions, and text at exact times ("Sale ends Sunday" at 10 s).
+- **Styles:** shadow, outline, box, neon. **Animations:** fade, slide in, word-by-word, typewriter. Top, center or bottom.
+- Price tag in your brand color, plus an end card with product, price, CTA button, logo and @handle.
+
+**Audio**
+- Your music track, fitted and faded. **Keep the clips' own sound** (music turns down under it). Music volume.
+
+**Not possible:** AI-generated footage, object/background removal, voiceover, auto-captions from speech, stickers/emoji, keyframing one moment.
 
 ## Chat version (easiest)
 
@@ -129,6 +148,9 @@ folder + description
    ├─ media.py     find files → score sharpness → drop blurry → choose shots and lengths
    ├─ chat.py      ReelChat: one Claude call per message, edit_video tool → re-render
    ├─ web/         FastAPI server + single-page chat (upload, video, download)
+   ├─ beats.py     beat detection (numpy) → cut times snapped to beats
+   ├─ transitions.py  spin / flip / cube / whip / zoom / glitch / shake drawn with Pillow
+   ├─ effects.py   filters, adjustments, effects as ffmpeg filter strings
    ├─ overlays.py  draw title / price tag / captions / end card as PNGs (Pillow)
    └─ render.py    ffmpeg: one clip per shot (zoom/pan, look) → xfade chain
                    → overlays → music → MP4 (H.264 + AAC, faststart)
@@ -149,7 +171,6 @@ The tests generate their own photos and clips with ffmpeg and render real videos
 
 ## Ideas for next
 
-- Beat-synced cuts (detect beats in the music track)
 - Auto captions from speech with Whisper
 - Host the chat page so shop owners can use it from their phones (needs login and storage)
 - Saved brand kits per shop (colors, font, logo, handle)

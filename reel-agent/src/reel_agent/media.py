@@ -42,6 +42,7 @@ class Shot:
     asset: Asset
     length: float             # seconds on screen
     start: float = 0.0
+    speed: float = 1.0
 
 
 def find_media(folder: str | Path) -> list[Asset]:
@@ -128,17 +129,17 @@ def pick_shots(assets: list[Asset], plan) -> list[Shot]:
 
     shot_len = plan.shot_length
     for a in assets:
-        score(a, shot_len * plan.speed)
+        score(a, shot_len * plan.speed_for(a.name))
     assets = [a for a in assets if a.sharpness >= 0]
 
-    trans = 0.04 if plan.transition == "cut" else 0.4
+    trans = 0.0 if plan.transition == "cut" else plan.transition_duration
     wanted = max(1, round((plan.duration - trans) / (shot_len - trans)))
 
     if plan.drop_blurry and len(assets) > 2:
         # Clearly blurry (far below the folder's median sharpness): always drop,
         # as long as at least two shots remain.
         med = sorted(a.sharpness for a in assets)[len(assets) // 2]
-        sharp = [a for a in assets if a.sharpness >= 0.35 * med]
+        sharp = [a for a in assets if a.sharpness >= 0.12 * med]
         assets = sharp if len(sharp) >= 2 else assets
     if len(assets) > wanted:
         # More than we need: drop the least sharp, keep filename order for the story.
@@ -153,12 +154,12 @@ def pick_shots(assets: list[Asset], plan) -> list[Shot]:
     shots = []
     for a in assets:
         L = length
+        sp = plan.speed_for(a.name)
         if a.kind == "video":
-            src_needed = L * plan.speed
-            if a.duration < src_needed:
-                L = max(a.duration / plan.speed, trans * 2 + 0.3)
-            start = min(a.start, max(a.duration - L * plan.speed, 0.0))
+            if a.duration < L * sp:
+                L = max(a.duration / sp, trans * 2 + 0.3)
+            start = min(a.start, max(a.duration - L * sp, 0.0))
         else:
             start = 0.0
-        shots.append(Shot(a, round(L, 3), round(start, 3)))
+        shots.append(Shot(a, round(L, 3), round(start, 3), sp))
     return shots

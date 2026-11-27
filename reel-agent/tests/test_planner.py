@@ -31,7 +31,7 @@ def test_simple_plan_other_formats_and_moods():
 def test_plan_sanitises_bad_values():
     p = EditPlan.from_dict({"format": "imax", "duration": 999, "look": "neon",
                             "brand_color": "nope", "speed": 9, "unknown": 1})
-    assert (p.format, p.duration, p.look, p.brand_color, p.speed) == ("reel", 90, "natural", "#111111", 2.0)
+    assert (p.format, p.duration, p.look, p.brand_color, p.speed) == ("reel", 90, "natural", "#111111", 3.0)
     assert EditPlan(brand_color="fff").brand_color == "#FFFFFF"
 
 
@@ -50,7 +50,7 @@ def test_claude_plan_uses_tool_output():
                        "pace": "fast", "title": "Autumn glow", "cta": "Shop now", "price": "$24",
                        "brand_color": "#6D4C41", "text_color": "#FFFFFF", "captions": ["Hand-poured"]})
     p = claude_plan("cozy autumn vibe for the candle", ["a.jpg", "b.mp4"], client=fake)
-    assert (p.look, p.transition, p.title, p.captions) == ("warm", "slide", "Autumn glow", ["Hand-poured"])
+    assert (p.look, p.transition, p.title, p.captions) == ("warm", "slide_left", "Autumn glow", ["Hand-poured"])
     call = fake.calls[0]
     assert call["tool_choice"]["name"] == "make_plan"
     assert "b.mp4" in call["messages"][0]["content"]

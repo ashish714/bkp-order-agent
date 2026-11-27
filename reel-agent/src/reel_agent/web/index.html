@@ -34,6 +34,10 @@
   .me { align-self:flex-end; background:var(--me); color:var(--me-text); border-bottom-right-radius:4px; }
   .bot { align-self:flex-start; background:var(--bot); border-bottom-left-radius:4px; }
   .typing { color:var(--muted); font-style:italic; }
+  .bot { white-space:normal; }
+  .bot p { margin:0 0 6px; } .bot p:last-child { margin-bottom:0; }
+  .bot ul { margin:4px 0 6px; padding-left:20px; } .bot li { margin:2px 0; }
+  .bot code { font-size:13px; background:rgba(0,0,0,.06); padding:1px 4px; border-radius:4px; }
   .vid { align-self:flex-start; background:var(--bot); padding:8px; border-radius:14px; max-width:85%; }
   .vid video { display:block; max-height:58vh; max-width:100%; border-radius:10px; background:#000; }
   .vid .row { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:6px; font-size:13px; color:var(--muted); }
@@ -62,10 +66,11 @@
   <div id="log" aria-live="polite"></div>
 
   <div class="chips">
-    <button type="button">15 sec warm Reel, shop now</button>
+    <button type="button">15 sec Reel, mixed transitions, on the beat</button>
+    <button type="button">Spin transitions</button>
+    <button type="button">Cinematic look, letterbox, grain</button>
+    <button type="button">Word-by-word captions</button>
     <button type="button">Make it shorter</button>
-    <button type="button">Moody look, slow pace</button>
-    <button type="button">Square post, hard cuts</button>
   </div>
   <form id="f">
     <textarea id="m" placeholder="Describe your video…" aria-label="Message"></textarea>
@@ -77,19 +82,35 @@ const $ = id => document.getElementById(id);
 const log = $('log'), input = $('m'), tray = $('tray');
 let sid = null, busy = false, mode = 'simple', fileCount = 0;
 
+function esc(t) { return t.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function md(text) {
+  // small, safe markdown: **bold**, *italic*, `code`, "- " bullets, line breaks
+  const inline = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|\W)\*(?!\s)(.+?)\*(?=\W|$)/g, '$1<i>$2</i>')
+                            .replace(/`([^`]+)`/g, '<code>$1</code>');
+  let html = '', inList = false;
+  for (const line of text.split('\n')) {
+    const m = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)/);
+    if (m) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(m[1]) + '</li>'; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    html += line.trim() ? '<p>' + inline(line) + '</p>' : '';
+  }
+  return html + (inList ? '</ul>' : '');
+}
 function add(text, who, extra) {
   const d = document.createElement('div');
   d.className = 'msg ' + who + (extra ? ' ' + extra : '');
-  d.textContent = text;
+  if (who === 'bot' && !extra) d.innerHTML = md(text); else d.textContent = text;
   log.appendChild(d); log.scrollTop = log.scrollHeight;
   return d;
 }
-function addVideo(url, length) {
+function addVideo(url, length, cuts) {
   const d = document.createElement('div'); d.className = 'vid';
   const v = document.createElement('video');
   v.src = url; v.controls = true; v.playsInline = true; v.preload = 'metadata';
   const row = document.createElement('div'); row.className = 'row';
-  const info = document.createElement('span'); info.textContent = length ? `${length}s` : '';
+  const info = document.createElement('span');
+  info.textContent = (length ? `${length}s` : '') + (cuts && cuts.length ? ` · ${cuts.length} cuts` : '');
+  if (cuts && cuts.length) info.title = cuts.map(c => `#${c.cut} at ${c.at}s: ${c.transition}`).join('\n');
   const a = document.createElement('a'); a.href = url; a.download = ''; a.textContent = 'Download';
   row.append(info, a); d.append(v, row);
   log.appendChild(d); log.scrollTop = log.scrollHeight;
@@ -156,7 +177,7 @@ async function send(text) {
     if (!r.ok) { add('Sorry: ' + (data.detail || r.status), 'bot'); return; }
     if (data.reply) add(data.reply, 'bot');
     if (data.video_url) {
-      addVideo(data.video_url, data.length);
+      addVideo(data.video_url, data.length, data.cuts);
       const used = new Set(data.shots.map(s => s.file));
       tray.querySelectorAll('.thumb').forEach(t => t.classList.toggle('off', !used.has(t.dataset.name)));
     }

@@ -108,3 +108,19 @@ def test_uploads_sorted_into_media_music_logo(tmp_path):
     assert chat.add_file("song.mp3", b"x") == "music" and chat.music.name == "song.mp3"
     assert chat.add_file("Logo.png", b"x") == "logo" and chat.logo.name == "Logo.png"
     assert chat.files() == ["evil_name.jpg"]
+
+
+def test_simple_chat_new_features_merge(media_dir, tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("REEL_AGENT_MODE", raising=False)
+    chat = ReelChat(tmp_path / "s")
+    load(chat, media_dir, {"01_front.jpg", "02_unbox.mp4", "03_detail.jpg"})
+    t1 = chat.send("8 sec reel, vignette")
+    assert t1.video and t1.plan["effects"] == ["vignette"] and len(t1.cuts) == 2
+    t2 = chat.send("add grain, spin at 2 sec, reverse 02_unbox")
+    assert t2.plan["effects"] == ["vignette", "grain"]
+    assert t2.cuts[0]["transition"] == "spin"
+    assert t2.plan["reverse_files"] == ["02_unbox.mp4"]
+    t3 = chat.send("upbeat, on the beat")
+    assert "music" in t3.reply.lower()   # beat sync without music explains itself
+    assert "Cuts: #1 at" in chat._state()

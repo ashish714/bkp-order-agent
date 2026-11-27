@@ -10,7 +10,7 @@ from pathlib import Path
 from .media import find_media, pick_shots
 from .plan import EditPlan
 from .planner import make_plan
-from .render import render, timeline
+from .render import build_timeline, render
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,14 +68,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {s.asset.name:<32} {s.asset.kind:<5} {s.length:.1f}s{extra}")
     if skipped:
         print(f"  skipped (blurry or not needed): {', '.join(skipped)}")
-    tl = timeline(shots, plan)
-    print(f"Length: {tl['total']:.1f}s")
+    tl = build_timeline(shots, plan, args.music)
+    if tl.beats:
+        print(f"Music: {tl.beats.bpm:.0f} BPM")
+    for cut in tl.cuts:
+        print(f"  cut {cut['cut']} at {cut['at']:.1f}s: {cut['transition']}")
+    print(f"Length: {tl.total:.1f}s")
 
     if args.dry_run:
         return 0
     out = Path(args.out) if args.out else folder / "reel.mp4"
     t0 = time.time()
-    render(shots, plan, out, music=args.music, logo=args.logo, font_path=args.font)
+    render(tl, plan, out, music=args.music, logo=args.logo, font_path=args.font)
     print(f"\nDone in {time.time() - t0:.0f}s -> {out}")
     return 0
 
