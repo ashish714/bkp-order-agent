@@ -1,0 +1,6 @@
+reel.mp4
+*.mp4
+!examples/*.mp4
+__pycache__/
+.venv/
+sample_media/

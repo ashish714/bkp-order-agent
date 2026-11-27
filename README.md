@@ -118,3 +118,7 @@ keeping the same return shapes. Also:
 | `BKP_DB_PATH` | `data/bkp.db` | SQLite database location |
 
 The model and effort level are set at the top of `src/bkp_agent/agent.py`.
+
+## Also in this repo
+
+- [`reel-agent/`](reel-agent/): turns raw product photos and clips plus a one-line description into an edited Instagram Reel. See its README.
