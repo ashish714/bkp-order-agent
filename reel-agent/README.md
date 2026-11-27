@@ -7,7 +7,7 @@ product Reel for a small shop.
 reel-agent ./candle "15 sec warm reel for our new soy candle, \$24, shop now, @glowco, brown brand color"
 ```
 
-Sample output: [`examples/sample-reel.mp4`](examples/sample-reel.mp4)
+Sample output: [`examples/sample-reel.mp4`](examples/sample-reel.mp4) · Chat page: [`examples/chat-screens.png`](examples/chat-screens.png)
 
 What you get: a 9:16 MP4 with the best shots in order, slow zooms on photos, the
 sharpest part of each clip, a color look, transitions, an opening title, a price
@@ -27,6 +27,35 @@ tag, short captions, music and a branded end card ("Soy Candle · $24 · SHOP NO
 10. **Music:** fitted to the video length with fade-in and fade-out. With no music it adds a silent track so Instagram accepts the file.
 
 It doesn't sync cuts to the beat, auto-caption speech, remove objects or generate new footage.
+
+## Chat version (easiest)
+
+A web page where you drag in photos and clips, describe the video, watch it, and keep
+chatting to change it.
+
+```bash
+pip install -e ".[ai,heic,web]"
+export ANTHROPIC_API_KEY=sk-ant-...     # optional; without it you get simple (keyword) mode
+reel-agent-web
+```
+
+Open **http://localhost:8000**, then:
+
+1. Tap **＋ Add photos / videos**, or drag files in. Add an `.mp3` for music, and name your logo `logo.png` to put it on the end card.
+2. Type what you want: *"15 sec Reel for our new soy candle, $24, cozy autumn vibe, @glowco"*.
+3. Watch the video in the chat. Ask for changes: *"make it shorter"*, *"price is $19 now"*,
+   *"drop the shaky clip"*, *"moody look"*, *"put the close-up first"*. Each change re-renders the video (usually under a minute).
+4. Tap **Download** for the final MP4. Thumbnails that are dimmed weren't used.
+
+In **AI mode** (API key set), Claude understands normal conversation, edits only what you ask
+for, and can reorder or drop files by name. It costs about 2–3 cents per message.
+In **simple mode** (no key), each message is read for keywords ("shorter", "warm", "$19",
+"square", "remove 02_pour") and merged into the current video.
+
+To open it on your phone over the same Wi-Fi, run `HOST=0.0.0.0 reel-agent-web` and go to
+`http://<your-laptop-ip>:8000`. Anyone on that network can then reach it, so only do this on your home Wi-Fi.
+
+Uploads and renders are saved in `~/.reel-agent/sessions/` (change it with `REEL_AGENT_DATA`).
 
 ## Two modes
 
@@ -98,6 +127,8 @@ folder + description
    │               claude_plan() Claude    ─┴─► EditPlan (plan.py)
    │
    ├─ media.py     find files → score sharpness → drop blurry → choose shots and lengths
+   ├─ chat.py      ReelChat: one Claude call per message, edit_video tool → re-render
+   ├─ web/         FastAPI server + single-page chat (upload, video, download)
    ├─ overlays.py  draw title / price tag / captions / end card as PNGs (Pillow)
    └─ render.py    ffmpeg: one clip per shot (zoom/pan, look) → xfade chain
                    → overlays → music → MP4 (H.264 + AAC, faststart)
@@ -120,5 +151,5 @@ The tests generate their own photos and clips with ffmpeg and render real videos
 
 - Beat-synced cuts (detect beats in the music track)
 - Auto captions from speech with Whisper
-- A folder watcher or a WhatsApp/Instagram upload flow for shop owners
+- Host the chat page so shop owners can use it from their phones (needs login and storage)
 - Saved brand kits per shop (colors, font, logo, handle)

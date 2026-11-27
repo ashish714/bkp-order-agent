@@ -26,6 +26,11 @@ COLOR_NAMES = {
 
 # ---------------------------------------------------------------- simple mode
 def simple_plan(prompt: str) -> EditPlan:
+    return EditPlan.from_dict(simple_fields(prompt))
+
+
+def simple_fields(prompt: str) -> dict:
+    """Only the plan fields the text actually mentions (used for chat edits too)."""
     p = prompt.lower()
     plan: dict = {}
 
@@ -35,7 +40,7 @@ def simple_plan(prompt: str) -> EditPlan:
         plan["format"] = "square"
     elif re.search(r"\b(4:5|feed post|portrait post)\b", p):
         plan["format"] = "portrait"
-    else:
+    elif re.search(r"\b(9:16|reels?|tiktok|shorts|vertical|story)\b", p):
         plan["format"] = "reel"
 
     m = re.search(r"(\d{1,2})\s*(?:-|\s)?\s*(s|sec|secs|second|seconds)\b", p)
@@ -109,7 +114,7 @@ def simple_plan(prompt: str) -> EditPlan:
     if not plan.get("title") and plan.get("product"):
         plan["title"] = ("New: " + plan["product"]) if re.search(r"\bnew\b|launch", p) else plan["product"]
 
-    return EditPlan.from_dict(plan)
+    return plan
 
 
 # ---------------------------------------------------------------- Claude mode

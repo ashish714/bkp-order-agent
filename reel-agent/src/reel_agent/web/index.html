@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reel Agent</title>
+<style>
+  :root { --bg:#f6f4f1; --card:#fff; --text:#1f1b17; --muted:#77706a; --accent:#6d4c41; --me:#6d4c41; --me-text:#fff; --bot:#f0ece7; --border:#e6e0d9; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14110f; --card:#1d1916; --text:#ece6df; --muted:#a39a91; --accent:#c79a7e; --me:#8a6352; --me-text:#fff; --bot:#29231f; --border:#332c27; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  .wrap { max-width:760px; margin:0 auto; height:100dvh; display:flex; flex-direction:column; padding:14px; gap:10px; }
+  header { display:flex; align-items:center; justify-content:space-between; }
+  header h1 { font-size:18px; margin:0; }
+  header small { color:var(--muted); display:block; font-weight:400; font-size:13px; }
+  .badge { white-space:nowrap; flex:0 0 auto; font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+  button { font:inherit; cursor:pointer; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); padding:8px 14px; }
+  button:disabled { opacity:.5; cursor:default; }
+
+  #tray { display:flex; gap:8px; overflow-x:auto; padding:8px; background:var(--card); border:1px dashed var(--border); border-radius:12px; min-height:84px; align-items:center; }
+  #tray.drag { border-color:var(--accent); background:var(--bot); }
+  .thumb { flex:0 0 64px; height:64px; border-radius:8px; overflow:hidden; position:relative; background:var(--bot); }
+  .thumb img, .thumb video { width:100%; height:100%; object-fit:cover; display:block; }
+  .thumb span { position:absolute; bottom:0; left:0; right:0; font-size:10px; background:rgba(0,0,0,.55); color:#fff; padding:1px 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .thumb.off { opacity:.35; }
+  .add { flex:0 0 auto; height:64px; padding:0 14px; display:flex; align-items:center; gap:6px; color:var(--muted); }
+  .extra { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .hint { color:var(--muted); font-size:13px; }
+
+  #log { flex:1; overflow-y:auto; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .msg { max-width:85%; padding:10px 14px; border-radius:14px; white-space:pre-wrap; word-wrap:break-word; }
+  .me { align-self:flex-end; background:var(--me); color:var(--me-text); border-bottom-right-radius:4px; }
+  .bot { align-self:flex-start; background:var(--bot); border-bottom-left-radius:4px; }
+  .typing { color:var(--muted); font-style:italic; }
+  .vid { align-self:flex-start; background:var(--bot); padding:8px; border-radius:14px; max-width:85%; }
+  .vid video { display:block; max-height:58vh; max-width:100%; border-radius:10px; background:#000; }
+  .vid .row { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:6px; font-size:13px; color:var(--muted); }
+  .vid a { color:var(--accent); font-weight:600; text-decoration:none; }
+
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chips button { padding:5px 10px; font-size:13px; border-radius:999px; }
+  form { display:flex; gap:8px; }
+  textarea { flex:1; font:inherit; padding:10px 12px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); min-width:0; resize:none; height:44px; }
+  form button { background:var(--accent); color:#fff; border:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Reel Agent<small>Upload photos &amp; clips, describe the video, then keep chatting to tweak it</small></h1>
+    <span class="badge" id="mode">…</span>
+  </header>
+
+  <div id="tray" aria-label="Uploaded files">
+    <label class="add" for="file"><button type="button" id="pick">＋ Add photos / videos</button></label>
+    <span class="hint" id="trayHint">Drop files here. Name a file logo.png for your end-card logo; add an mp3 for music.</span>
+  </div>
+  <input type="file" id="file" multiple accept="image/*,video/*,audio/*,.heic" hidden>
+
+  <div id="log" aria-live="polite"></div>
+
+  <div class="chips">
+    <button type="button">15 sec warm Reel, shop now</button>
+    <button type="button">Make it shorter</button>
+    <button type="button">Moody look, slow pace</button>
+    <button type="button">Square post, hard cuts</button>
+  </div>
+  <form id="f">
+    <textarea id="m" placeholder="Describe your video…" aria-label="Message"></textarea>
+    <button type="submit" id="send">Send</button>
+  </form>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const log = $('log'), input = $('m'), tray = $('tray');
+let sid = null, busy = false, mode = 'simple', fileCount = 0;
+
+function add(text, who, extra) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + who + (extra ? ' ' + extra : '');
+  d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+  return d;
+}
+function addVideo(url, length) {
+  const d = document.createElement('div'); d.className = 'vid';
+  const v = document.createElement('video');
+  v.src = url; v.controls = true; v.playsInline = true; v.preload = 'metadata';
+  const row = document.createElement('div'); row.className = 'row';
+  const info = document.createElement('span'); info.textContent = length ? `${length}s` : '';
+  const a = document.createElement('a'); a.href = url; a.download = ''; a.textContent = 'Download';
+  row.append(info, a); d.append(v, row);
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+  v.addEventListener('loadedmetadata', () => { log.scrollTop = log.scrollHeight; });
+}
+
+async function start() {
+  const r = await fetch('/api/session', { method: 'POST' });
+  const data = await r.json();
+  sid = data.session; mode = data.mode;
+  $('mode').textContent = mode === 'claude' ? 'AI mode' : 'Simple mode';
+  $('mode').title = mode === 'claude' ? 'Claude plans your edits' : 'No API key: keyword mode';
+  add("Hi! Add your product photos and clips above, then tell me what video you want. " +
+      "After it renders you can ask for changes, like \"shorter\", \"price is $19\" or \"remove the blurry one\".", 'bot');
+}
+
+function thumb(file, name) {
+  const t = document.createElement('div'); t.className = 'thumb'; t.title = name; t.dataset.name = name;
+  const url = URL.createObjectURL(file);
+  let el;
+  if (file.type.startsWith('video')) { el = document.createElement('video'); el.src = url; el.muted = true; }
+  else if (file.type.startsWith('image') && !/heic|heif/i.test(file.type + name)) { el = document.createElement('img'); el.src = url; }
+  else { el = document.createElement('div'); el.style.cssText = 'height:100%;display:grid;place-items:center;font-size:22px'; el.textContent = '🖼'; }
+  const s = document.createElement('span'); s.textContent = name;
+  t.append(el, s); return t;
+}
+
+async function upload(files) {
+  if (!files.length) return;
+  $('trayHint').textContent = `Uploading ${files.length} file(s)…`;
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  try {
+    const r = await fetch(`/api/session/${sid}/upload`, { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.status);
+    const extras = [];
+    data.added.forEach((a, i) => {
+      if (a.kind === 'media') tray.insertBefore(thumb(files[i], a.name), $('trayHint'));
+      else extras.push(a.kind === 'music' ? `♪ ${a.name}` : `Logo: ${a.name}`);
+    });
+    fileCount = data.files.length;
+    const bits = [`${fileCount} file(s)`];
+    if (data.music) bits.push(`♪ ${data.music}`);
+    if (data.logo) bits.push(`logo: ${data.logo}`);
+    $('trayHint').textContent = bits.join(' · ');
+    $('trayHint').className = 'extra';
+  } catch (e) {
+    $('trayHint').textContent = 'Upload failed: ' + e.message;
+  }
+}
+
+async function send(text) {
+  text = text.trim();
+  if (busy || !text || !sid) return;
+  busy = true; $('send').disabled = true;
+  add(text, 'me'); input.value = '';
+  const typing = add(fileCount ? 'Editing your video… this usually takes under a minute.' : 'Thinking…', 'bot', 'typing');
+  try {
+    const r = await fetch(`/api/session/${sid}/chat`, { method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ message: text }) });
+    const data = await r.json();
+    typing.remove();
+    if (!r.ok) { add('Sorry: ' + (data.detail || r.status), 'bot'); return; }
+    if (data.reply) add(data.reply, 'bot');
+    if (data.video_url) {
+      addVideo(data.video_url, data.length);
+      const used = new Set(data.shots.map(s => s.file));
+      tray.querySelectorAll('.thumb').forEach(t => t.classList.toggle('off', !used.has(t.dataset.name)));
+    }
+  } catch (e) {
+    typing.remove(); add('Network error. Please try again.', 'bot');
+  } finally { busy = false; $('send').disabled = false; input.focus(); }
+}
+
+$('pick').onclick = () => $('file').click();
+$('file').onchange = e => { upload([...e.target.files]); e.target.value = ''; };
+['dragenter', 'dragover'].forEach(ev => tray.addEventListener(ev, e => { e.preventDefault(); tray.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(ev => tray.addEventListener(ev, e => { e.preventDefault(); tray.classList.remove('drag'); }));
+tray.addEventListener('drop', e => upload([...e.dataTransfer.files]));
+$('f').onsubmit = e => { e.preventDefault(); send(input.value); };
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input.value); } });
+document.querySelectorAll('.chips button').forEach(b => b.onclick = () => send(b.textContent));
+start();
+</script>
+</body>
+</html>

@@ -10,10 +10,12 @@ dependencies = [
 [project.optional-dependencies]
 ai = ["anthropic>=1.13"]
 heic = ["pillow-heif>=0.16"]
-dev = ["pytest>=8.2"]
+web = ["fastapi>=0.111", "uvicorn>=0.30", "python-multipart>=0.0.9"]
+dev = ["pytest>=8.2", "httpx>=0.27"]
 
 [project.scripts]
 reel-agent = "reel_agent.cli:main"
+reel-agent-web = "reel_agent.web.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -21,6 +23,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+reel_agent = ["web/*.html"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

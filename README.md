@@ -121,4 +121,4 @@ The model and effort level are set at the top of `src/bkp_agent/agent.py`.
 
 ## Also in this repo
 
-- [`reel-agent/`](reel-agent/): turns raw product photos and clips plus a one-line description into an edited Instagram Reel. See its README.
+- [`reel-agent/`](reel-agent/): turns raw product photos and clips plus a one-line description into an edited Instagram Reel, from the command line or a chat page. See its README.
