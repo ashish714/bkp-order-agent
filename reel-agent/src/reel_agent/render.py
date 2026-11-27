@@ -14,6 +14,8 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,8 +23,8 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from . import overlays
 from .beats import Beats, detect_beats, fit_lengths_to_beats
-from .effects import final_effects, glow_graph, look_and_adjust
-from .media import Shot
+from .effects import final_effects, glow_graph, look_and_adjust, pulse_graph
+from .media import WORKERS, Shot
 from .plan import CUSTOM_TRANSITIONS, NATIVE_TRANSITIONS, EditPlan
 from .transitions import render_custom
 
@@ -37,6 +39,10 @@ from .effects import LOOK_FILTERS  # noqa: E402,F401
 
 class RenderError(RuntimeError):
     pass
+
+
+def _log(msg: str) -> None:
+    print(f"[reel] {msg}", flush=True)
 
 
 def _run(cmd: list[str]) -> None:
@@ -286,16 +292,26 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
     size = plan.size
     try:
         # a. per-shot clips
-        segs: list[Path] = []
-        seg_audio: list[bool] = []
-        for i, shot in enumerate(tl.shots):
+        t0 = time.time()
+        _log(f"rendering {len(tl.shots)} shots, {tl.total:.1f}s video")
+        def make_seg(i: int) -> tuple[Path, bool]:
+            ts = time.time()
+            shot = tl.shots[i]
             seg = tmp / f"seg_{i:03d}.mp4"
             if shot.asset.kind == "photo":
                 _photo_segment(shot, i, plan, seg, tmp)
-                seg_audio.append(False)
+                has = False
             else:
-                seg_audio.append(_video_segment(shot, plan, seg))
-            segs.append(seg)
+                has = _video_segment(shot, plan, seg)
+            _log(f"shot {i + 1}/{len(tl.shots)} {shot.asset.name}: {time.time() - ts:.1f}s")
+            return seg, has
+
+        # several shots at once: zoompan and decoding are mostly single-threaded
+        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+            done = list(pool.map(make_seg, range(len(tl.shots))))
+        segs = [d[0] for d in done]
+        seg_audio = [d[1] for d in done]
+        _log(f"all shots ready: {time.time() - t0:.1f}s")
         lens = [s.length for s in tl.shots]
 
         # b. custom transitions
@@ -307,7 +323,9 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
             if tl.kinds[i] in CUSTOM_TRANSITIONS:
                 T = tl.overlaps[i]
                 tc = tmp / f"tc_{i:03d}.mp4"
+                ts = time.time()
                 render_custom(tl.kinds[i], segs[i - 1], lens[i - 1], segs[i], T, size, tc)
+                _log(f"transition {i} ({tl.kinds[i]}): {time.time() - ts:.1f}s")
                 tcs[i] = tc
                 cut_end[i - 1] += T
                 cut_start[i] += T
@@ -329,9 +347,17 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
             cmd += ["-i", str(tc)]
             tc_idx[i], idx = idx, idx + 1
         layers = _text_layers(tl, plan, tmp, font_path)
-        layer_idx = []
-        for png, _, _, _ in layers:
-            cmd += ["-loop", "1", "-framerate", str(FPS), "-t", f"{tl.total:.3f}", "-i", str(png)]
+        layer_idx, layer_pos = [], []
+        for png, a, b, _ in layers:
+            # crop each full-frame text image to its text, so overlay only touches those pixels
+            with Image.open(png) as im:
+                box = im.getchannel("A").getbbox() or (0, 0, 2, 2)
+                x0, y0 = box[0] // 2 * 2, box[1] // 2 * 2
+                x1, y1 = min(im.width, (box[2] + 1) // 2 * 2), min(im.height, (box[3] + 1) // 2 * 2)
+                im.crop((x0, y0, max(x1, x0 + 2), max(y1, y0 + 2))).save(png)
+            layer_pos.append((x0, y0))
+            # the layer only exists for its own seconds, not the whole video
+            cmd += ["-loop", "1", "-framerate", str(FPS), "-t", f"{max(b - a, 0.1) + 0.05:.3f}", "-i", str(png)]
             layer_idx.append(idx); idx += 1
         music_idx = None
         if music:
@@ -377,22 +403,28 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
         if fx:
             parts.append(f"{cur}{','.join(fx)}[fx]")
             cur = "[fx]"
+        if "pulse_on_beat" in plan.effects and tl.beats:
+            parts.append(pulse_graph(cur, "[pulse]", plan.size, tl.beats, tl.montage))
+            cur = "[pulse]"
         if "glow" in plan.effects:
-            parts.append(glow_graph(cur, "[glow]", tl.montage))
+            parts.append(glow_graph(cur, "[glow]", tl.montage, plan.size))
             cur = "[glow]"
 
         # f. text layers
         H = size[1]
-        for k, ((_, a, b, anim), li) in enumerate(zip(layers, layer_idx)):
-            d = min(0.3, max((b - a) / 3, 0.05))
+        for k, ((_, a, b, anim), li, (lx, ly)) in enumerate(zip(layers, layer_idx, layer_pos)):
+            dur = b - a
+            d = min(0.3, max(dur / 3, 0.05))
             chain = "format=rgba"
             if anim in ("fade", "slide"):
-                chain += f",fade=in:st={a:.3f}:d={d:.3f}:alpha=1,fade=out:st={b - d:.3f}:d={d:.3f}:alpha=1"
+                chain += f",fade=in:st=0:d={d:.3f}:alpha=1,fade=out:st={dur - d:.3f}:d={d:.3f}:alpha=1"
             elif anim == "fadeout":
-                chain += f",fade=out:st={b - d:.3f}:d={d:.3f}:alpha=1"
+                chain += f",fade=out:st={dur - d:.3f}:d={d:.3f}:alpha=1"
+            chain += f",setpts=PTS-STARTPTS+{a:.3f}/TB"
             parts.append(f"[{li}:v]{chain}[o{k}]")
-            y = f"'if(lt(t,{a + 0.35:.3f}),{H * 0.06:.0f}*pow(1-(t-{a:.3f})/0.35,2),0)'" if anim == "slide" else "0"
-            parts.append(f"{cur}[o{k}]overlay=x=0:y={y}:enable='between(t,{a:.3f},{b:.3f})'[v{k}]")
+            y = (f"'{ly}+if(lt(t,{a + 0.35:.3f}),{H * 0.06:.0f}*pow(1-(t-{a:.3f})/0.35,2),0)'"
+                 if anim == "slide" else str(ly))
+            parts.append(f"{cur}[o{k}]overlay=x={lx}:y={y}:eof_action=pass:enable='between(t,{a:.3f},{b:.3f})'[v{k}]")
             cur = f"[v{k}]"
         parts.append(f"{cur}format=yuv420p[vout]")
 
@@ -432,7 +464,9 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
                 "-t", f"{total:.3f}", "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast",
                 "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
                 "-movflags", "+faststart", str(out_path)]
+        ts = time.time()
         _run(cmd)
+        _log(f"final pass ({len(layers)} text layers): {time.time() - ts:.1f}s; total {time.time() - t0:.1f}s")
         return out_path
     finally:
         if not keep_temp:

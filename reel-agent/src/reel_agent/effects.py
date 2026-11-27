@@ -14,7 +14,7 @@ LOOK_FILTERS = {
     "vintage": "curves=preset=vintage,eq=saturation=0.85",
     "film": "curves=m='0/0.06 0.5/0.5 1/0.94',colorbalance=rs=0.04:bs=-0.03:bh=0.04,eq=saturation=0.9:contrast=1.05",
     "cinematic": "colorbalance=rs=-0.06:bs=0.08:rh=0.08:bh=-0.08,eq=contrast=1.12:saturation=1.05",
-    "golden": "colortemperature=temperature=4200,eq=saturation=1.15:brightness=0.02",
+    "golden": "colorbalance=rs=0.04:gs=0.03:bs=-0.10:rm=0.05:gm=0.03:bm=-0.09:rh=0.03:gh=0.03:bh=-0.06,eq=saturation=1.08:brightness=0.02",
     "pastel": "eq=saturation=0.75:brightness=0.05:contrast=0.9,colorbalance=rs=0.03:bs=0.04",
     "noir": "hue=s=0,eq=contrast=1.35:brightness=-0.03,curves=preset=strong_contrast",
     "faded": "curves=all='0/0.12 1/0.92',eq=saturation=0.8",
@@ -44,10 +44,6 @@ def final_effects(plan: EditPlan, montage_end: float, beats=None) -> list[str]:
     if "shake" in e:
         fx.append(f"scale={int(W * 1.06) // 2 * 2}:{int(H * 1.06) // 2 * 2},"
                   f"crop={W}:{H}:x='(iw-{W})/2+{on}*14*sin(t*21)':y='(ih-{H})/2+{on}*14*cos(t*17)'")
-    if "pulse_on_beat" in e and beats:
-        ph = f"mod(it-{beats.first:.3f},{beats.period:.4f})"
-        fx.append(f"zoompan=z='1+0.07*exp(-{ph}*14)*lt(it,{montage_end:.3f})'"
-                  f":x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={W}x{H}:fps=30")
     if "flash_on_beat" in e and beats:
         ph = f"mod(t-{beats.first:.3f},{beats.period:.4f})"
         fx.append(f"eq=brightness='0.22*exp(-{ph}*16)*{on}':eval=frame")
@@ -65,6 +61,18 @@ def final_effects(plan: EditPlan, montage_end: float, beats=None) -> list[str]:
     return fx
 
 
-def glow_graph(label_in: str, label_out: str, montage_end: float) -> str:
-    return (f"{label_in}split[gA][gB];[gB]gblur=sigma=24[gC];"
+def glow_graph(label_in: str, label_out: str, montage_end: float, size=(1080, 1920)) -> str:
+    """Soft glow: blur a quarter-size copy (16x fewer pixels), scale it back, screen-blend."""
+    W, H = size
+    return (f"{label_in}split[gA][gB];[gB]scale={W // 4}:{H // 4},gblur=sigma=6,scale={W}:{H}[gC];"
             f"[gA][gC]blend=all_mode=screen:all_opacity=0.35:enable='lt(t,{montage_end:.3f})'{label_out}")
+
+
+def pulse_graph(label_in: str, label_out: str, size, beats, montage_end: float) -> str:
+    """Zoom punch on every beat: a 7% zoomed copy shown for the first 0.12 s after each beat."""
+    W, H = size
+    zw, zh = int(W * 1.07) // 2 * 2, int(H * 1.07) // 2 * 2
+    on = (f"lt(mod(t-{beats.first:.3f}+0.02,{beats.period:.4f}),0.14)*gte(t,{beats.first - 0.02:.3f})"
+          f"*lt(t,{montage_end:.3f})")
+    return (f"{label_in}split[pA][pB];[pB]scale={zw}:{zh},crop={W}:{H}[pC];"
+            f"[pA][pC]overlay=0:0:enable='{on}'{label_out}")

@@ -7,6 +7,8 @@ rest are dropped when there are more photos than the reel needs.
 from __future__ import annotations
 
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -19,6 +21,8 @@ try:  # iPhone photos
     register_heif_opener()
 except ImportError:  # optional
     pass
+
+WORKERS = max(1, min(4, (os.cpu_count() or 2) // 2))
 
 PHOTO_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".3gp"}
@@ -128,8 +132,9 @@ def pick_shots(assets: list[Asset], plan) -> list[Shot]:
         raise ValueError("No usable photos or videos found.")
 
     shot_len = plan.shot_length
-    for a in assets:
-        score(a, shot_len * plan.speed_for(a.name))
+    # score files in parallel (each one is mostly ffmpeg decoding)
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        list(pool.map(lambda a: score(a, shot_len * plan.speed_for(a.name)), assets))
     assets = [a for a in assets if a.sharpness >= 0]
 
     trans = 0.0 if plan.transition == "cut" else plan.transition_duration

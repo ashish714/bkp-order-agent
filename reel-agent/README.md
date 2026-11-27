@@ -74,6 +74,9 @@ In **simple mode** (no key), each message is read for keywords ("shorter", "warm
 To open it on your phone over the same Wi-Fi, run `HOST=0.0.0.0 reel-agent-web` and go to
 `http://<your-laptop-ip>:8000`. Anyone on that network can then reach it, so only do this on your home Wi-Fi.
 
+While a video renders, the Terminal shows progress lines like `[reel] shot 3/9 …` and `[reel] final pass …`.
+A typical Reel takes 1–3 minutes; many 4K clips plus drawn transitions and effects take longer.
+
 Uploads and renders are saved in `~/.reel-agent/sessions/` (change it with `REEL_AGENT_DATA`).
 
 ## Two modes
