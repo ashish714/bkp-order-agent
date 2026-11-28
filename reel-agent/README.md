@@ -18,6 +18,11 @@ tag, short captions, music and a branded end card ("Soy Candle · $24 · SHOP NO
 The main CapCut editing tools, driven by a sentence instead of a timeline.
 
 **Editing**
+- **Smart cuts from one clip** (dance, talking, performance): upload a single video and it plays in real
+  time for the full length, while cuts on the beat switch between wide, medium and close-up framing centred
+  on the people moving. The clip's own sound runs unbroken, so voices and music stay in sync.
+- **Several pieces per clip:** with few files and a longer video, long clips are cut into several pieces
+  (in time order) instead of one.
 - **Edits from one sentence**, then takes changes in chat ("shorter", "spin at 15 sec", "add grain").
 - **Picks the shots:** files go in filename order, clearly blurry shots are dropped, and each clip's sharpest part is used.
 - **Photos come alive** with slow zooms and pans (Ken Burns).
@@ -40,12 +45,17 @@ The main CapCut editing tools, driven by a sentence instead of a timeline.
 **Text**
 - Opening title, captions, and text at exact times ("Sale ends Sunday" at 10 s).
 - **Styles:** shadow, outline, box, neon. **Animations:** fade, slide in, word-by-word, typewriter. Top, center or bottom.
-- Price tag in your brand color, plus an end card with product, price, CTA button, logo and @handle.
+- Price tag in your brand color, plus an end card with product, price, CTA button, logo and @handle
+  (only when there's a product, price or handle to show).
 
 **Audio**
 - Your music track, fitted and faded. **Keep the clips' own sound** (music turns down under it). Music volume.
 
-**Not possible:** AI-generated footage, object/background removal, voiceover, auto-captions from speech, stickers/emoji, keyframing one moment.
+**Not possible:** AI-generated footage, object/background removal, voiceover, auto-captions from speech, stickers/emoji, stabilizing shaky footage, keyframing one moment.
+
+Extras that cost render time (effects, drawn transitions, word-by-word text, clip sound, beat sync) are only
+used when you ask for them. Each render prints `[reel] using: …` in the Terminal. Quitting the app with
+Ctrl+C also stops any render in progress.
 
 ## Chat version (easiest)
 
@@ -151,6 +161,8 @@ folder + description
    ├─ media.py     find files → score sharpness → drop blurry → choose shots and lengths
    ├─ chat.py      ReelChat: one Claude call per message, edit_video tool → re-render
    ├─ web/         FastAPI server + single-page chat (upload, video, download)
+   ├─ smartcut.py  one clip in real time: motion-tracked wide/medium/close framing cut on the beat
+   ├─ procs.py     tracks ffmpeg processes so quitting the app stops them
    ├─ beats.py     beat detection (numpy) → cut times snapped to beats
    ├─ transitions.py  spin / flip / cube / whip / zoom / glitch / shake drawn with Pillow
    ├─ effects.py   filters, adjustments, effects as ffmpeg filter strings

@@ -21,7 +21,7 @@ from pathlib import Path
 from .media import find_media, pick_shots
 from .plan import EditPlan
 from .planner import MODEL, PLAN_SCHEMA, simple_fields
-from .render import Timeline, build_timeline, render
+from .render import Timeline, prepare_timeline, render
 
 AUDIO_EXT = {".mp3", ".m4a", ".wav", ".aac", ".ogg"}
 
@@ -58,9 +58,15 @@ spin, spin_left, flip, flip_up, cube_left/right, zoom_in, zoom_out, whip_left/ri
 shake. 'mixed' varies them. Set one for every cut with `transition`, or single cuts with \
 `cut_transitions` (use the cut numbers and times in the state).
 - Beat sync: cuts land on the music's beats (needs a music file; the state says if there is one).
+- Smart cuts from one clip (dance, talking, performance): with exactly one video it's automatic. \
+The clip plays in real time for the whole length and cuts switch between wide, medium and \
+close-up framing centred on the people moving, on the beat of its own sound or the uploaded \
+music. Its own sound plays unbroken (voice and music in sync) unless a music file is uploaded; \
+set keep_audio=true to keep it under uploaded music. continuous=true forces this with more files.
 - Filters (look), adjustments (brightness, contrast, saturation, warmth), effects (vignette, \
 grain, letterbox, shake, retro, glow, sharpen, pulse_on_beat, flash_on_beat).
 - Blur-fill canvas (fit=blur) so nothing gets cropped.
+- End card (product, price, CTA, @handle) only appears when there's a product, price or handle.
 - Text: title, captions, timed texts, styles (shadow, outline, box, neon), animations (fade, \
 slide, words, typewriter), position. Price tag and branded end card with call to action.
 - Audio: music track (they upload it), keep clips' own sound, music volume.
@@ -68,6 +74,11 @@ slide, words, typewriter), position. Price tag and branded end card with call to
 How to work:
 - If the files are uploaded and the request is clear enough, call edit_video right away. \
 Don't ask for details you can sensibly default (15 s, 9:16 reel, a look that fits the mood).
+- Only turn on extras the user actually asks for: effects, sharpen, blur-fill (fit=blur), \
+keep_audio, beat_sync, speed/reverse/mirror, drawn transitions (spin, flip, cube, whip, \
+zoom_in, zoom_out, glitch, shake) and words/typewriter text. They make rendering slower. \
+Unasked, keep it simple: fade transitions, a look that fits the mood, fade text, no effects. \
+Never add extras on a follow-up the user didn't request.
 - For follow-ups, call edit_video with only the fields that change. For list fields (effects, \
 captions, texts, cut_transitions, clip lists) send the complete new list.
 - "At 15 seconds" means the cut nearest 15 s: use cut_transitions with its cut number.
@@ -76,7 +87,8 @@ captions, texts, cut_transitions, clip lists) send the complete new list.
 - If no files are uploaded yet, ask them to add photos or clips first.
 - Replies: one or two short sentences of plain text, no markdown. Say what you changed.
 - Not possible here: AI-generated footage, removing objects or backgrounds, voiceover, \
-auto-captions from speech, stickers/emoji, keyframing a single moment. Say so briefly and \
+auto-captions from speech, stickers/emoji, stabilizing shaky footage, keyframing a single \
+moment. Say so briefly and \
 offer the closest thing you can do."""
 
 
@@ -164,10 +176,16 @@ class ReelChat:
         lines.append("Current plan: " + (json.dumps(self.plan.to_dict()) if self.plan else "no video yet"))
         if self.timeline:
             tl = self.timeline
-            lines.append(f"Current video: {tl.total:.1f}s ({tl.montage:.1f}s montage + end card)"
-                         + (f", music at {tl.beats.bpm:.0f} BPM" if tl.beats else ""))
+            if tl.continuous:
+                lines.append("Mode: smart cuts (one clip in real time; cuts change framing). Sound: "
+                             + ("clip's own, unbroken" if tl.audio_clip else "uploaded music"))
+            lines.append(f"Current video: {tl.total:.1f}s ({tl.montage:.1f}s montage"
+                         + (" + end card)" if self.plan.show_end_card else ")")
+                         + (f", beat {tl.beats.bpm:.0f} BPM" if tl.beats else ""))
             lines.append("Shots: " + "; ".join(f"{i + 1}. {s.asset.name} {tl.starts[i]:.1f}s-"
-                                               f"{tl.starts[i] + s.length:.1f}s" for i, s in enumerate(tl.shots)))
+                                               f"{tl.starts[i] + s.length:.1f}s"
+                                               + (f" zoom {s.zoom:.2f}" if s.zoom > 1.001 else "")
+                                               for i, s in enumerate(tl.shots)))
             lines.append("Cuts: " + ("; ".join(f"#{c['cut']} at {c['at']:.1f}s {c['transition']} "
                                                f"({c['from']} -> {c['to']})" for c in tl.cuts) or "none"))
         return "\n".join(lines)
@@ -278,8 +296,7 @@ class ReelChat:
             assets.sort(key=lambda a: (rank.get(a.name, len(rank)), a.name.lower()))
         music = str(self.music) if self.music else None
         try:
-            shots = pick_shots(assets, self.plan)
-            tl = build_timeline(shots, self.plan, music)
+            tl = prepare_timeline(assets, self.plan, music)
             self.renders += 1
             name = f"reel_{self.renders:02d}_{int(time.time())}.mp4"
             render(tl, self.plan, self.out_dir / name, music=music,

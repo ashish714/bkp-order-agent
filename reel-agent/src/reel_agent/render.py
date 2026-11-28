@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import shutil
+
+import numpy as np
 import subprocess
 import tempfile
 import time
@@ -21,7 +23,7 @@ from pathlib import Path
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
-from . import overlays
+from . import overlays, procs
 from .beats import Beats, detect_beats, fit_lengths_to_beats
 from .effects import final_effects, glow_graph, look_and_adjust, pulse_graph
 from .media import WORKERS, Shot
@@ -46,10 +48,34 @@ def _log(msg: str) -> None:
 
 
 def _run(cmd: list[str]) -> None:
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    res = procs.run(cmd)
     if res.returncode != 0:
         tail = "\n".join(res.stderr.strip().splitlines()[-15:])
         raise RenderError(f"ffmpeg failed:\n{tail}")
+
+
+def describe_extras(plan: EditPlan, tl: "Timeline") -> str:
+    """One line listing the settings that cost render time, so it's easy to see what's on."""
+    kinds = sorted({k for k in tl.kinds[1:] if k})
+    drawn = [k for k in kinds if k in CUSTOM_TRANSITIONS]
+    bits = [f"look={plan.look}", "transitions=" + (",".join(kinds) or "none")]
+    if drawn:
+        bits.append("drawn=" + ",".join(drawn))
+    if plan.effects:
+        bits.append("effects=" + ",".join(plan.effects))
+    if plan.fit == "blur":
+        bits.append("blur-fill")
+    if plan.keep_audio:
+        bits.append("clip-sound")
+    if plan.beat_sync:
+        bits.append("beat-sync" + ("" if tl.beats else "(no beat found)"))
+    if plan.text_animation != "fade":
+        bits.append(f"text={plan.text_animation}")
+    if any(v != 1.0 for v in plan.clip_speeds.values()) or plan.speed != 1.0:
+        bits.append("speed")
+    if plan.reverse_files or plan.mirror_files:
+        bits.append("reverse/mirror")
+    return " ".join(bits)
 
 
 def _frames(seconds: float) -> int:
@@ -67,6 +93,8 @@ class Timeline:
     total: float
     beats: Beats | None = None
     end_card: bool = True
+    continuous: bool = False          # one clip playing in real time (smart cuts)
+    audio_clip: tuple | None = None   # (path, start): the clip's own sound as one continuous track
 
     @property
     def cuts(self) -> list[dict]:
@@ -80,10 +108,13 @@ class Timeline:
                 "trans": max(self.overlaps[1:] or [0.0])}[key]
 
 
-def _resolve_kinds(n: int, plan: EditPlan, approx_cut_times: list[float]) -> list[str | None]:
+def _resolve_kinds(n: int, plan: EditPlan, approx_cut_times: list[float],
+                   continuous: bool = False) -> list[str | None]:
     kinds: list[str | None] = [None]
     for i in range(1, n):
         k = plan.transition
+        if k == "auto":
+            k = "cut" if continuous else "fade"
         if k == "mixed":
             k = MIX[(i - 1) % len(MIX)]
         kinds.append(k)
@@ -93,49 +124,85 @@ def _resolve_kinds(n: int, plan: EditPlan, approx_cut_times: list[float]) -> lis
         elif "at" in c and n > 1:
             i = min(range(1, n), key=lambda j: abs(approx_cut_times[j - 1] - c["at"]))
             kinds[i] = c["transition"]
-    return [("fade" if k == "mixed" else k) for k in kinds]
+    return [("fade" if k in ("mixed", "auto") else k) for k in kinds]
 
 
-def build_timeline(shots: list[Shot], plan: EditPlan, music: str | None = None) -> Timeline:
+def build_timeline(shots: list[Shot], plan: EditPlan, music: str | None = None,
+                   continuous: tuple | None = None) -> Timeline:
+    """continuous = (clip_start, beats) when the shots are consecutive pieces of one clip
+    (smart cuts). Their source times then follow the output clock exactly."""
     n = len(shots)
     T = _frames(plan.transition_duration) / FPS
+    is_cont = continuous is not None
+    default_cut = plan.transition == "cut" or (plan.transition == "auto" and is_cont)
 
     # approximate cut times with the default transition, to resolve "at 15s" requests
     approx, pos = [], 0.0
     for s in shots[:-1]:
-        pos += s.length - (0 if plan.transition == "cut" else T)
-        approx.append(pos + (0 if plan.transition == "cut" else T / 2))
-    kinds = _resolve_kinds(n, plan, approx)
+        pos += s.length - (0 if default_cut else T)
+        approx.append(pos + (0 if default_cut else T / 2))
+    if is_cont:  # piece lengths are exact segment lengths here
+        approx = list(np.cumsum([s.length for s in shots[:-1]]))
+    kinds = _resolve_kinds(n, plan, approx, is_cont)
     overlaps = [0.0] + [0.0 if k == "cut" else T for k in kinds[1:]]
 
     lengths = [s.length for s in shots]
-    min_len = []
-    for i in range(n):
-        need = overlaps[i] + (overlaps[i + 1] if i + 1 < n else (END_TRANS if plan.end_card else 0)) + 0.25
-        min_len.append(need)
-        lengths[i] = max(lengths[i], need)
-
     beats = None
-    wants_beats = plan.beat_sync or {"pulse_on_beat", "flash_on_beat"} & set(plan.effects)
-    if music and wants_beats:
-        try:
-            beats = detect_beats(music)
-        except Exception:
-            beats = None
-        if beats and beats.confidence < 0.4:  # no clear beat: keep normal pacing
-            beats = None
-    if beats and plan.beat_sync and n > 1:
-        lengths = fit_lengths_to_beats(lengths, overlaps, beats, min_len)
+    if is_cont:
+        # each piece gets half of each neighbouring transition, so cuts stay where they were planned
+        lengths = [L + overlaps[i] / 2 + (overlaps[i + 1] / 2 if i + 1 < n else 0) for i, L in enumerate(lengths)]
+        beats = continuous[1]
+    else:
+        min_len = []
+        for i in range(n):
+            need = overlaps[i] + (overlaps[i + 1] if i + 1 < n else (END_TRANS if plan.show_end_card else 0)) + 0.25
+            min_len.append(need)
+            lengths[i] = max(lengths[i], need)
+        wants_beats = plan.beat_sync or {"pulse_on_beat", "flash_on_beat"} & set(plan.effects)
+        if music and wants_beats:
+            try:
+                beats = detect_beats(music)
+            except Exception:
+                beats = None
+            if beats and beats.confidence < 0.4:  # no clear beat: keep normal pacing
+                beats = None
+        if beats and plan.beat_sync and n > 1:
+            lengths = fit_lengths_to_beats(lengths, overlaps, beats, min_len)
 
-    shots = [Shot(s.asset, round(L, 3), s.start, getattr(s, "speed", 1.0)) for s, L in zip(shots, lengths)]
+    shots = [Shot(s.asset, round(L, 3), s.start, s.speed, s.zoom, s.focus) for s, L in zip(shots, lengths)]
     starts, pos = [], 0.0
     for i, s in enumerate(shots):
         starts.append(round(pos, 3))
         nxt = overlaps[i + 1] if i + 1 < n else 0.0
         pos += s.length - nxt
     montage = pos
-    total = montage + (END_CARD_SECONDS - END_TRANS if plan.end_card else 0.0)
-    return Timeline(shots, kinds, overlaps, starts, round(montage, 3), round(total, 3), beats, plan.end_card)
+    total = montage + (END_CARD_SECONDS - END_TRANS if plan.show_end_card else 0.0)
+
+    audio_clip = None
+    if is_cont:
+        clip_start = continuous[0]
+        for i, s in enumerate(shots):          # source time = output time + clip_start
+            s.start = round(clip_start + starts[i], 3)
+        if not music or plan.keep_audio:
+            audio_clip = (shots[0].asset.path, clip_start)
+    return Timeline(shots, kinds, overlaps, starts, round(montage, 3), round(total, 3), beats,
+                    plan.show_end_card, is_cont, audio_clip)
+
+
+def prepare_timeline(assets, plan: EditPlan, music: str | None = None) -> Timeline:
+    """Pick the shots and build the timeline. One clip (or continuous=True) -> smart cuts."""
+    from .media import pick_shots
+    from .smartcut import continuous_shots
+    usable = [a for a in assets if a.kind == "photo" or a.duration >= 0.6]
+    videos = [a for a in usable if a.kind == "video"]
+    cont = plan.continuous
+    if cont is None:
+        cont = len(usable) == 1 and len(videos) == 1
+    if cont and videos:
+        clip = max(videos, key=lambda a: a.duration)
+        shots, clip_start, beats = continuous_shots(clip, plan, music)
+        return build_timeline(shots, plan, music, continuous=(clip_start, beats))
+    return build_timeline(pick_shots(assets, plan), plan, music)
 
 
 def timeline(shots: list[Shot], plan: EditPlan, music: str | None = None) -> Timeline:
@@ -192,11 +259,23 @@ def _has_audio(path: Path) -> bool:
     return bool(res.stdout.strip())
 
 
-def _video_segment(shot: Shot, plan: EditPlan, out: Path) -> bool:
+def _crop_expr(shot: Shot, W: int, H: int) -> str:
+    """Scale-and-crop for a framing: zoom 1 = the whole (cover-cropped) frame."""
+    z = shot.zoom
+    if z <= 1.001:
+        return f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
+    zw, zh = int(W * z) // 2 * 2, int(H * z) // 2 * 2
+    fx, fy = shot.focus
+    x = f"clip((iw-{zw})/2+{fx * zw - W / 2:.1f},0,iw-{W})"
+    y = f"clip((ih-{zh})/2+{fy * zh - H / 2:.1f},0,ih-{H})"
+    return f"scale={zw}:{zh}:force_original_aspect_ratio=increase,crop={W}:{H}:x='{x}':y='{y}'"
+
+
+def _video_segment(shot: Shot, plan: EditPlan, out: Path, own_audio: bool = True) -> bool:
     """Returns True if the segment carries the clip's own audio."""
     W, H = plan.size
     n = _frames(shot.length)
-    speed = plan.speed_for(shot.asset.name)
+    speed = shot.speed
     src_len = shot.length * speed + 0.15
     pre = []
     if shot.asset.name in plan.reverse_files:
@@ -212,8 +291,8 @@ def _video_segment(shot: Shot, plan: EditPlan, out: Path) -> bool:
               f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
               f"[bg][fg]overlay=(W-w)/2:(H-h)/2,{tail}[v]")
     else:
-        fc = f"[0:v]{pre},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},{tail}[v]"
-    keep = plan.keep_audio and _has_audio(shot.asset.path)
+        fc = f"[0:v]{pre},{_crop_expr(shot, W, H)},{tail}[v]"
+    keep = own_audio and plan.keep_audio and _has_audio(shot.asset.path)
     cmd = ["ffmpeg", "-v", "error", "-y", "-ss", f"{shot.start:.3f}", "-t", f"{src_len:.3f}",
            "-i", str(shot.asset.path), "-filter_complex", fc, "-map", "[v]", "-frames:v", str(n)]
     if keep:
@@ -294,6 +373,7 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
         # a. per-shot clips
         t0 = time.time()
         _log(f"rendering {len(tl.shots)} shots, {tl.total:.1f}s video")
+        _log("using: " + describe_extras(plan, tl))
         def make_seg(i: int) -> tuple[Path, bool]:
             ts = time.time()
             shot = tl.shots[i]
@@ -302,7 +382,7 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
                 _photo_segment(shot, i, plan, seg, tmp)
                 has = False
             else:
-                has = _video_segment(shot, plan, seg)
+                has = _video_segment(shot, plan, seg, own_audio=not tl.continuous)
             _log(f"shot {i + 1}/{len(tl.shots)} {shot.asset.name}: {time.time() - ts:.1f}s")
             return seg, has
 
@@ -336,7 +416,7 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
             cmd += ["-i", str(seg)]
         idx = n
         end_idx = None
-        if plan.end_card:
+        if plan.show_end_card:
             png = overlays.end_card(size, plan, tmp / "end.png", logo=logo, font_path=font_path)
             end_seg = tmp / "seg_end.mp4"
             _still_segment(png, END_CARD_SECONDS, end_seg)
@@ -363,6 +443,10 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
         if music:
             cmd += ["-stream_loop", "-1", "-i", str(music)]
             music_idx, idx = idx, idx + 1
+        clip_audio_idx = None
+        if tl.audio_clip and _has_audio(Path(tl.audio_clip[0])):
+            cmd += ["-ss", f"{tl.audio_clip[1]:.3f}", "-i", str(tl.audio_clip[0])]
+            clip_audio_idx, idx = idx, idx + 1
 
         # d. video chain
         parts = []
@@ -442,7 +526,7 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
                          f"afade=in:st=0:d={fi:.3f},afade=out:st={max(L - fi, 0):.3f}:d={fi:.3f},"
                          f"adelay={int(start * 1000)}:all=1[ca{i}]")
             clip_labels.append(f"[ca{i}]")
-        mv = plan.music_volume * (0.45 if clip_labels else 1.0)
+        mv = plan.music_volume * (0.45 if (clip_labels or clip_audio_idx is not None) else 1.0)
         audio_in = []
         if music_idx is not None:
             parts.append(f"[{music_idx}:a]atrim=0:{total:.3f},asetpts=PTS-STARTPTS,volume={mv:.3f},"
@@ -451,6 +535,11 @@ def render(shots: list[Shot] | Timeline, plan: EditPlan, out_path: str | Path, m
         for lab in clip_labels:
             parts.append(f"{lab}aresample=44100,aformat=channel_layouts=stereo{lab[:-1]}s]")
             audio_in.append(f"{lab[:-1]}s]")
+        if clip_audio_idx is not None:
+            # the clip's own sound, unbroken, so voice/music stay in sync with the picture
+            parts.append(f"[{clip_audio_idx}:a]atrim=0:{total:.3f},asetpts=PTS-STARTPTS,"
+                         f"aresample=44100,aformat=channel_layouts=stereo[clipa]")
+            audio_in.append("[clipa]")
         if not audio_in:
             parts.append(f"anullsrc=r=44100:cl=stereo,atrim=0:{total:.3f}[aout0]")
         elif len(audio_in) == 1:

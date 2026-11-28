@@ -7,10 +7,10 @@ import sys
 import time
 from pathlib import Path
 
-from .media import find_media, pick_shots
+from .media import find_media
 from .plan import EditPlan
 from .planner import make_plan
-from .render import build_timeline, render
+from .render import prepare_timeline, render
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,14 +61,17 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.save_plan).write_text(json.dumps(plan.to_dict(), indent=2, ensure_ascii=False))
 
     print(f"\nScanning {len(assets)} files...")
-    shots = pick_shots(assets, plan)
+    tl = prepare_timeline(assets, plan, args.music)
+    shots = tl.shots
     skipped = [a.name for a in assets if a.name not in {s.asset.name for s in shots}]
+    if tl.continuous:
+        print("  smart cuts: one clip in real time, cuts switch framing (wide / medium / close)")
     for s in shots:
         extra = f" from {s.start:.1f}s" if s.asset.kind == "video" else ""
-        print(f"  {s.asset.name:<32} {s.asset.kind:<5} {s.length:.1f}s{extra}")
+        frame = f" zoom {s.zoom:.2f}" if s.zoom > 1.001 else ""
+        print(f"  {s.asset.name:<32} {s.asset.kind:<5} {s.length:.1f}s{extra}{frame}")
     if skipped:
         print(f"  skipped (blurry or not needed): {', '.join(skipped)}")
-    tl = build_timeline(shots, plan, args.music)
     if tl.beats:
         print(f"Music: {tl.beats.bpm:.0f} BPM")
     for cut in tl.cuts:

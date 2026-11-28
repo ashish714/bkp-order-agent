@@ -9,6 +9,7 @@ Each browser tab gets its own session folder under REEL_AGENT_DATA
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 import threading
 import uuid
 from dataclasses import asdict
@@ -18,13 +19,22 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
+from .. import procs
 from ..chat import ReelChat
 
 HERE = Path(__file__).parent
 DATA = Path(os.environ.get("REEL_AGENT_DATA", Path.home() / ".reel-agent" / "sessions"))
 MAX_UPLOAD_MB = int(os.environ.get("REEL_AGENT_MAX_UPLOAD_MB", "500"))
 
-app = FastAPI(title="Reel Agent")
+@asynccontextmanager
+async def _lifespan(app):
+    yield
+    n = procs.stop_all()          # app is quitting: don't leave renders running
+    if n:
+        print(f"[reel] stopped {n} running render step(s)", flush=True)
+
+
+app = FastAPI(title="Reel Agent", lifespan=_lifespan)
 _sessions: dict[str, ReelChat] = {}
 _locks: dict[str, threading.Lock] = {}
 
@@ -106,4 +116,5 @@ def main() -> None:
     import uvicorn
     port = int(os.environ.get("PORT", "8000"))
     print(f"Reel Agent: open http://localhost:{port}")
-    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=port)
+    # Ctrl+C: give requests 2 s, then stop (and stop any render still going)
+    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=port, timeout_graceful_shutdown=2)

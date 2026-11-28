@@ -47,6 +47,8 @@ class Shot:
     length: float             # seconds on screen
     start: float = 0.0
     speed: float = 1.0
+    zoom: float = 1.0                      # 1 = full frame; 1.3 = medium; 1.7 = close-up
+    focus: tuple[float, float] = (0.5, 0.45)  # where to centre a zoomed crop (0..1)
 
 
 def find_media(folder: str | Path) -> list[Asset]:
@@ -151,20 +153,42 @@ def pick_shots(assets: list[Asset], plan) -> list[Shot]:
         worst = sorted(assets, key=lambda a: a.sharpness)[:len(assets) - wanted]
         assets = [a for a in assets if a not in worst]
 
-    # Fewer assets than wanted: stretch each shot (up to ~2x) rather than repeat.
-    n = len(assets)
+    # Fewer files than shots wanted: cut several pieces from long videos
+    # (in time order, not overlapping) before stretching anything.
+    pieces = {a.name: 1 for a in assets}
+    base_len = max(1.0, trans * 2 + 0.3, shot_len)
+
+    def room(a: Asset) -> float:
+        sp = plan.speed_for(a.name)
+        return a.duration / (pieces[a.name] + 1) / sp if a.kind == "video" else 0.0
+
+    while sum(pieces.values()) < wanted:
+        best = max(assets, key=room)
+        if room(best) < base_len * 1.05:
+            break
+        pieces[best.name] += 1
+
+    n = sum(pieces.values())
     length = (plan.duration + (n - 1) * trans) / n
     length = min(max(length, max(1.0, trans * 2 + 0.3)), shot_len * 2)
 
     shots = []
     for a in assets:
-        L = length
         sp = plan.speed_for(a.name)
-        if a.kind == "video":
+        k = pieces[a.name]
+        if a.kind != "video":
+            shots.append(Shot(a, round(length, 3), 0.0, sp))
+            continue
+        if k == 1:
+            L = length
             if a.duration < L * sp:
                 L = max(a.duration / sp, trans * 2 + 0.3)
             start = min(a.start, max(a.duration - L * sp, 0.0))
-        else:
-            start = 0.0
-        shots.append(Shot(a, round(L, 3), round(start, 3), sp))
+            shots.append(Shot(a, round(L, 3), round(start, 3), sp))
+            continue
+        seg = a.duration / k
+        L = min(length, seg / sp)
+        for j in range(k):
+            start = j * seg + max(0.0, (seg - L * sp) / 2)
+            shots.append(Shot(a, round(L, 3), round(start, 3), sp))
     return shots

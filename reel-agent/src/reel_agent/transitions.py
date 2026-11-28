@@ -17,6 +17,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 
+from . import procs
+
 FPS = 30
 
 
@@ -45,10 +47,13 @@ def write_frames(frames: list[Image.Image], out: Path) -> None:
          "-pix_fmt", "yuv420p", str(out)],
         stdin=subprocess.PIPE, stderr=subprocess.PIPE,
     )
+    procs.track(proc)
     for f in frames:
         proc.stdin.write(f.convert("RGB").tobytes())
     proc.stdin.close()
-    if proc.wait() != 0:
+    code = proc.wait()
+    procs.untrack(proc)
+    if code != 0:
         raise RuntimeError("encoding transition failed: " + proc.stderr.read().decode()[-500:])
 
 

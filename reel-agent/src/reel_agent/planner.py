@@ -93,9 +93,10 @@ def simple_fields(prompt: str) -> dict:
         sym = {"rs": "₹", "rs.": "₹", "inr": "₹", "usd": "$"}.get(m.group(1).lower(), m.group(1))
         plan["price"] = f"{sym}{m.group(2)}"
 
-    m = re.search(r"[\"“']([^\"”']{2,40})[\"”']", prompt)
+    m = re.search(r"\btitle\s*[:=-]\s*([^,.\n]{2,40})", prompt, re.I) or \
+        re.search(r"[\"“']([^\"”']{2,40})[\"”']", prompt)
     if m:
-        plan["title"] = m.group(1)
+        plan["title"] = m.group(1).strip()
 
     m = re.search(r"(?:for (?:our|my|the) (?:new )?|launch(?:ing)? (?:our|my|the)? ?(?:new )?)"
                   r"([a-z0-9][a-z0-9 \-&']{1,30}?)(?=[,.!]| at | for | in | with |$)", p)
@@ -151,6 +152,12 @@ def simple_fields(prompt: str) -> dict:
 
     if re.search(r"\bbeats?\b|on beat|beat[- ]?sync|sync(ed)? to (the )?music|to the music", p):
         plan["beat_sync"] = True
+    if re.search(r"smart cuts?|one take|single take|continuous|zoom cuts?|wide and close", p):
+        plan["continuous"] = True
+    if re.search(r"no smart cuts|montage of (the )?clips", p):
+        plan["continuous"] = False
+    if re.search(r"voice sync|lip[- ]?sync|keep (the |their |my )?voices?|audio sync|sound sync|in sync", p):
+        plan["keep_audio"] = True
 
     effect_words = {
         "vignette": r"vignette", "grain": r"\bgrain|grainy|film grain", "letterbox": r"letterbox|black bars|cinema bars",
@@ -219,6 +226,10 @@ PLAN_SCHEMA = {
         "pace": {"type": "string", "enum": list(PACES)},
         "speed": {"type": "number", "description": "Speed for all video clips: 1 normal, 0.5 slow motion, 2 fast."},
         "beat_sync": {"type": "boolean", "description": "Land every cut on the music's beat. Needs a music file."},
+        "continuous": {"type": ["boolean", "null"], "description":
+                       "Smart cuts: one clip plays in real time and cuts switch between wide / medium / "
+                       "close-up framing on the beat, so its own voice and music stay in sync. Automatic "
+                       "when there's exactly one video (null). true forces it with more files; false turns it off."},
         "brightness": {"type": "number", "description": "-1..1, 0 = unchanged."},
         "contrast": {"type": "number", "description": "-1..1, 0 = unchanged."},
         "saturation": {"type": "number", "description": "-1..1, 0 = unchanged."},
@@ -265,7 +276,10 @@ Rules:
 - Never invent a price, discount, handle or product claim the user didn't give. Leave it empty.
 - Titles and captions are punchy and short. No hashtags, no emojis unless the user used them.
 - Default to a 15 second 9:16 reel unless the user says otherwise.
-- Choose the look and pace that match the mood they describe."""
+- Choose the look and pace that match the mood they describe.
+- Only turn on extras the user asks for (effects, sharpen, blur-fill, keep_audio, beat_sync, \
+drawn transitions like spin/flip/whip/glitch, words/typewriter text). Otherwise: fades, fade \
+text, no effects. Extras make rendering slower."""
 
 
 def claude_plan(prompt: str, media_names: list[str] | None = None, client=None) -> EditPlan:

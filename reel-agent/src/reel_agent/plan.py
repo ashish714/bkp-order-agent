@@ -33,7 +33,7 @@ NATIVE_TRANSITIONS = {
 }
 CUSTOM_TRANSITIONS = ("spin", "spin_left", "flip", "flip_up", "zoom_in", "zoom_out", "whip_left",
                       "whip_right", "whip_up", "glitch", "shake", "cube_left", "cube_right")
-TRANSITIONS = ("cut", "mixed") + tuple(NATIVE_TRANSITIONS) + CUSTOM_TRANSITIONS
+TRANSITIONS = ("auto", "cut", "mixed") + tuple(NATIVE_TRANSITIONS) + CUSTOM_TRANSITIONS
 ALIASES = {"slide": "slide_left", "wipe": "wipe_left", "whip": "whip_left", "cube": "cube_left",
            "turn": "flip", "rotate": "spin", "white_flash": "flash", "dip_to_black": "fade_black",
            "crossfade": "fade", "push": "push_left", "zoom_blur": "zoom_in", "none": "cut", "hard_cut": "cut"}
@@ -51,7 +51,7 @@ POSITIONS = ("top", "center", "bottom")
 def norm_transition(name: str) -> str:
     n = str(name or "").strip().lower().replace("-", "_").replace(" ", "_")
     n = ALIASES.get(n, n)
-    return n if n in TRANSITIONS else "fade"
+    return n if n in TRANSITIONS else "auto"
 
 
 @dataclass
@@ -59,12 +59,13 @@ class EditPlan:
     format: str = "reel"
     duration: float = 15.0          # target length of the montage, seconds (end card is extra)
     look: str = "natural"
-    transition: str = "fade"        # default for every cut; "mixed" varies them
+    transition: str = "auto"        # default for every cut: auto = fades (hard cuts for one-clip smart cuts)
     transition_duration: float = 0.5
     cut_transitions: list[dict] = field(default_factory=list)  # [{"cut": 3, "transition": "spin"}]
     pace: str = "medium"
     speed: float = 1.0              # <1 = slow motion for every video clip
     beat_sync: bool = False         # land cuts on the music's beats
+    continuous: bool | None = None  # one clip in real time with smart framing cuts (None = auto for a single clip)
 
     # Adjustments, -1..1 (0 = unchanged)
     brightness: float = 0.0
@@ -151,6 +152,11 @@ class EditPlan:
                     "position": t.get("position") if t.get("position") in POSITIONS else "center",
                 })
         self.texts = texts[:10]
+
+    @property
+    def show_end_card(self) -> bool:
+        """The end card sells something: only show it when there's a product, price or handle."""
+        return self.end_card and bool(self.product or self.price or self.handle)
 
     @property
     def size(self) -> tuple[int, int]:
